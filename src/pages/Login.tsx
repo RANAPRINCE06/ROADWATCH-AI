@@ -1,8 +1,12 @@
 import React from 'react';
 import { Shield, Mail, Lock } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 export function Login() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirect = searchParams.get('redirect') || '/dashboard';
+
   return (
     <div className="bg-background text-on-surface min-h-screen flex flex-col relative overflow-hidden">
       <div className="absolute inset-0 z-0 pointer-events-none map-bg"></div>
@@ -30,7 +34,7 @@ export function Login() {
             <p className="text-body-md text-text-secondary">Access secure infrastructure data & analytics.</p>
           </div>
 
-          <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); window.location.href = '/dashboard'; }}>
+          <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); navigate(redirect); }}>
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mb-2">Government Email</label>
               <div className="relative">
