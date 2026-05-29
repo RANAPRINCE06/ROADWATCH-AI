@@ -1,15 +1,17 @@
-import React from 'react';
 import {
   Map,
   Rss, // For sensors icon
   Megaphone, // For campaign
   HardHat, // For engineering
-  CheckCircle,
-  ArrowRight,
   Maximize,
   Quote,
   Network,
-  Bot
+  Bot,
+  BookOpen,
+  Download,
+  FileText,
+  ExternalLink,
+  ShieldAlert
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -23,13 +25,13 @@ export function Landing() {
         </div>
         <div className="hidden md:flex items-center gap-8 text-sm font-semibold">
           <a href="#features" className="text-text-secondary hover:text-primary transition-all">Features</a>
-          <a href="#demo" className="text-text-secondary hover:text-primary transition-all">AI Demo</a>
+          <a href="#about" className="text-text-secondary hover:text-primary transition-all">About</a>
           <a href="#heatmap" className="text-text-secondary hover:text-primary transition-all">Live Map</a>
-          <a href="#faq" className="text-text-secondary hover:text-primary transition-all">Resources</a>
+          <a href="#resources" className="text-text-secondary hover:text-primary transition-all">Resources</a>
         </div>
         <div className="flex items-center gap-4">
           <Link to="/login" className="bg-primary text-on-primary px-4 py-2 rounded text-sm font-semibold hover:opacity-90 active:scale-95 transition-all shadow-sm">
-            Launch Console
+            Sign-in
           </Link>
         </div>
       </nav>
@@ -49,7 +51,7 @@ export function Landing() {
               Detect, report, and monitor dangerous roads in real time using satellite imagery and community-driven data intelligence.
             </p>
             <div className="flex flex-wrap gap-4 pt-4">
-              <Link to="/report" className="bg-safety-yellow text-primary px-8 py-4 rounded font-semibold text-lg flex items-center gap-2 hover:shadow-lg transition-all active:scale-95 border-t border-white/20">
+              <Link to="/login?redirect=/report" className="bg-safety-yellow text-primary px-8 py-4 rounded font-semibold text-lg flex items-center gap-2 hover:shadow-lg transition-all active:scale-95 border-t border-white/20">
                 <span className="font-bold">⚠</span> Report Hazard
               </Link>
               <Link to="/heatmap" className="bg-surface-container-highest text-primary px-8 py-4 rounded font-semibold text-lg flex items-center gap-2 hover:bg-surface-variant transition-all active:scale-95 border border-outline-variant">
@@ -84,20 +86,20 @@ export function Landing() {
         <div className="max-w-[1440px] mx-auto px-8">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             <div className="text-center space-y-2">
-              <p className="text-4xl md:text-5xl font-bold text-safety-yellow">12.4k</p>
-              <p className="text-[11px] font-bold text-on-primary-fixed-dim uppercase tracking-wider">Total Reports</p>
+              <p className="text-4xl md:text-5xl font-bold text-white">12.4k</p>
+              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Total Reports</p>
             </div>
             <div className="text-center space-y-2">
               <p className="text-4xl md:text-5xl font-bold text-white">8,290</p>
-              <p className="text-[11px] font-bold text-on-primary-fixed-dim uppercase tracking-wider">Roads Fixed</p>
+              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Roads Fixed</p>
             </div>
             <div className="text-center space-y-2">
-              <p className="text-4xl md:text-5xl font-bold text-error">412</p>
-              <p className="text-[11px] font-bold text-on-primary-fixed-dim uppercase tracking-wider">Active Hazards</p>
+              <p className="text-4xl md:text-5xl font-bold text-white">412</p>
+              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Active Hazards</p>
             </div>
             <div className="text-center space-y-2">
               <p className="text-4xl md:text-5xl font-bold text-white">94%</p>
-              <p className="text-[11px] font-bold text-on-primary-fixed-dim uppercase tracking-wider">Safe Zones</p>
+              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Safe Zones</p>
             </div>
           </div>
         </div>
@@ -141,34 +143,17 @@ export function Landing() {
         </div>
       </section>
 
-      <section id="demo" className="py-24 bg-surface-container-low">
+      <section id="about" className="py-24 bg-surface-container-low">
         <div className="max-w-[1440px] mx-auto px-8">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-6">
-              <h2 className="text-3xl font-bold">Smart City Vision AI</h2>
-              <p className="text-text-secondary text-sm leading-relaxed">
-                Our proprietary neural network detects road defects with 99.2% accuracy. From potholes to faded lane markings, we see what legacy systems miss.
+              <h2 className="text-3xl font-bold">About RoadWatch AI</h2>
+              <p className="text-text-secondary text-base leading-relaxed">
+                RoadWatch AI is an AI-powered road safety monitoring platform designed to detect road damage, assess accident risks, and assist authorities in prioritizing maintenance activities. The system leverages Computer Vision, Artificial Intelligence, and Smart Governance tools to improve road safety and reduce accidents caused by poor road conditions.
               </p>
-              <ul className="space-y-4">
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="text-safety-yellow w-6 h-6 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-bold">Real-time Anomaly Labeling</p>
-                    <p className="text-text-secondary text-xs mt-1">Automated tagging of hazard types and severity levels.</p>
-                  </div>
-                </li>
-                <li className="flex items-start gap-3">
-                  <CheckCircle className="text-safety-yellow w-6 h-6 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-bold">Predictive Maintenance</p>
-                    <p className="text-text-secondary text-xs mt-1">AI forecasts road degradation before it becomes dangerous.</p>
-                  </div>
-                </li>
-              </ul>
-              <button className="bg-primary text-on-primary px-6 py-3 rounded text-sm font-semibold flex items-center gap-2 hover:bg-on-surface-variant transition-all mt-4">
-                View Technical Docs
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <p className="text-text-secondary text-base leading-relaxed">
+                By enabling citizens to report hazards easily, the system uses deep learning models to assess severity in real time and automatically dispatches reports to the respective municipal corporations for rapid response.
+              </p>
             </div>
             <div className="relative rounded-xl overflow-hidden shadow-2xl border border-outline-variant aspect-video group">
               <img 
@@ -183,6 +168,78 @@ export function Landing() {
                 </div>
               </div>
               <div className="absolute top-0 left-0 w-full h-[2px] bg-safety-yellow/50 animate-[scan_3s_linear_infinite] shadow-[0_0_15px_#FACC15]"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="resources" className="py-24 bg-white border-t border-outline-variant/30">
+        <div className="max-w-[1440px] mx-auto px-8">
+          <div className="text-center mb-16 space-y-4">
+            <h2 className="text-3xl font-bold">Resources & Toolkits</h2>
+            <p className="text-text-secondary max-w-2xl mx-auto text-base">
+              Access guidelines, developer documentations, and tools to integrate with the RoadWatch AI safety ecosystem.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="border border-outline-variant rounded-xl p-6 hover:shadow-lg transition-all duration-300 group flex flex-col justify-between">
+              <div>
+                <div className="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center mb-6 group-hover:bg-safety-yellow transition-colors duration-300">
+                  <BookOpen className="text-primary w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-semibold mb-3">Citizen Safety Guide</h3>
+                <p className="text-text-secondary text-sm leading-relaxed mb-6">
+                  Learn how to safely identify and photograph road hazards, potholes, and structural damage without risking your safety.
+                </p>
+              </div>
+              <a href="/citizen_safety_guide.pdf" download="Citizen_Safety_Guide.pdf" className="text-primary hover:text-safety-yellow font-semibold text-sm inline-flex items-center gap-1 mt-auto">
+                Download PDF <Download className="w-4 h-4" />
+              </a>
+            </div>
+
+            <div className="border border-outline-variant rounded-xl p-6 hover:shadow-lg transition-all duration-300 group flex flex-col justify-between">
+              <div>
+                <div className="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center mb-6 group-hover:bg-safety-yellow transition-colors duration-300">
+                  <FileText className="text-primary w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-semibold mb-3">API Integration Docs</h3>
+                <p className="text-text-secondary text-sm leading-relaxed mb-6">
+                  Documentation for developers to integrate third-party sensors, CCTV camera streams, and municipal telemetry with our platform.
+                </p>
+              </div>
+              <a href="#" className="text-primary hover:text-safety-yellow font-semibold text-sm inline-flex items-center gap-1 mt-auto">
+                Explore API <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
+
+            <div className="border border-outline-variant rounded-xl p-6 hover:shadow-lg transition-all duration-300 group flex flex-col justify-between">
+              <div>
+                <div className="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center mb-6 group-hover:bg-safety-yellow transition-colors duration-300">
+                  <ShieldAlert className="text-primary w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-semibold mb-3">Municipal Playbook</h3>
+                <p className="text-text-secondary text-sm leading-relaxed mb-6">
+                  A step-by-step implementation toolkit for city governance teams to deploy, coordinate dispatches, and optimize road repair.
+                </p>
+              </div>
+              <a href="#" className="text-primary hover:text-safety-yellow font-semibold text-sm inline-flex items-center gap-1 mt-auto">
+                Request Toolkit <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
+
+            <div className="border border-outline-variant rounded-xl p-6 hover:shadow-lg transition-all duration-300 group flex flex-col justify-between">
+              <div>
+                <div className="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center mb-6 group-hover:bg-safety-yellow transition-colors duration-300">
+                  <Bot className="text-primary w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-semibold mb-3">Whitepapers & Case Studies</h3>
+                <p className="text-text-secondary text-sm leading-relaxed mb-6">
+                  Research on YOLOv8 computer vision training metrics, precision models, and predictive risk scoring algorithms.
+                </p>
+              </div>
+              <a href="/RoadWatch_AI_Research_Paper.pdf" download="RoadWatch_AI_Research_Paper.pdf" className="text-primary hover:text-safety-yellow font-semibold text-sm inline-flex items-center gap-1 mt-auto">
+                Read Research <Download className="w-4 h-4" />
+              </a>
             </div>
           </div>
         </div>
