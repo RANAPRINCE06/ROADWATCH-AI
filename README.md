@@ -102,7 +102,7 @@ Future integrations may include:
 ## Team
 
 ### Team Name
-RoadWatch AI
+SafeRoute Nexus
 
 ### Team Members
 - Prince Rana (Team Lead)
