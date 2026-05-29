@@ -294,27 +294,68 @@ export function ReportHazard() {
                   }
                 },
                 {
-                  text: `Analyze this road image for damage or safety hazards (such as potholes, waterlogging, cracks, missing dividers, traffic signal failures, or spillages).
-Identify details of the hazard.
-Return a valid JSON object matching the following structure (do NOT wrap it in markdown codeblocks like \`\`\`json ... \`\`\`, just return the raw JSON):
-{
-  "hazardType": "Pothole" | "Waterlogging" | "Missing Divider" | "Traffic Signal" | "Spillage" | "Other",
-  "severityScore": number (1.0 to 10.0),
-  "confidence": number (50 to 100),
-  "urgency": "Immediate (Within 24hrs)" | "High (2-3 days)" | "Medium (1 week)" | "Low (Routine)",
-  "detections": [
-    {
-      "label": string (e.g. "Pothole", "Crack"),
-      "severity": "Critical" | "High" | "Medium" | "Low",
-      "box_2d": [ymin, xmin, ymax, xmax] (integers representing normalized bounding box coordinates from 0 to 100 on the image. ymin is top, xmin is left, ymax is bottom, xmax is right)
-    }
-  ],
-  "description": string (brief description of what was detected)
-}`
+                  text: `Perform a professional civil engineering inspection of this road image.
+Carefully scan the road surface and surrounding infrastructure to locate and identify hazards (potholes, cracks, waterlogging/puddles, missing lane dividers, failed traffic lights, or road spills).
+For each detected hazard:
+- Focus on drawing extremely tight, pixel-accurate bounding boxes.
+- Calculate exact integer percentage coordinates [ymin, xmin, ymax, xmax] (0 to 100) representing height/width positions on the image.
+- Classify severity and explain the hazard detail in the description.`
                 }
               ]
             }
-          ]
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                hazardType: {
+                  type: "STRING",
+                  enum: ["Pothole", "Waterlogging", "Missing Divider", "Traffic Signal", "Spillage", "Other"]
+                },
+                severityScore: {
+                  type: "NUMBER",
+                  description: "Severity rating from 1.0 (minimal/cosmetic) to 10.0 (critical, highly hazardous, urgent repair needed)."
+                },
+                confidence: {
+                  type: "INTEGER",
+                  description: "AI confidence percentage (50 to 100)."
+                },
+                urgency: {
+                  type: "STRING",
+                  enum: ["Immediate (Within 24hrs)", "High (2-3 days)", "Medium (1 week)", "Low (Routine)"]
+                },
+                detections: {
+                  type: "ARRAY",
+                  description: "List of all individual hazard detections observed.",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      label: {
+                        type: "STRING",
+                        description: "Specific hazard name (e.g. 'Deep Pothole', 'Transverse Crack', 'Pool of Water')."
+                      },
+                      severity: {
+                        type: "STRING",
+                        enum: ["Critical", "High", "Medium", "Low"]
+                      },
+                      box_2d: {
+                        type: "ARRAY",
+                        description: "Normalized bounding box coordinate array: [ymin, xmin, ymax, xmax] as integer percentages from 0 to 100.",
+                        items: { type: "INTEGER" }
+                      }
+                    },
+                    required: ["label", "severity", "box_2d"]
+                  }
+                },
+                description: {
+                  type: "STRING",
+                  description: "Actionable summary detailing all detected anomalies and their threat level."
+                }
+              },
+              required: ["hazardType", "severityScore", "confidence", "urgency", "detections", "description"]
+            }
+          }
         })
       });
 
