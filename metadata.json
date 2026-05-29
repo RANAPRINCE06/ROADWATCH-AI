@@ -1,0 +1,6 @@
+{
+  "name": "RoadWatch AI",
+  "description": "Urban infrastructure intelligence platform that detects and reports road hazards using real-time analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
