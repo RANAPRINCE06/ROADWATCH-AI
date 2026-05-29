@@ -113,15 +113,47 @@ export function Dashboard() {
       const saved = localStorage.getItem('roadwatch_reports');
       if (saved) {
         const parsed = JSON.parse(saved) as any[];
-        return parsed.map(r => ({
-          ...r,
-          timestamp: new Date(r.timestamp)
-        }));
+        const sanitized = parsed.map(r => {
+          // Normalize and safeguard all properties to prevent undefined crash bugs
+          const title = r.title || r.type || 'Road Hazard';
+          const location = r.location || 'Reported Area';
+          
+          let severity = r.severity;
+          if (typeof severity !== 'string' || !['Critical', 'Active', 'Pending', 'Scheduled'].includes(severity)) {
+            severity = 'Active';
+          }
+          
+          const icon = r.icon || (r.type === 'Waterlogging' ? 'droplets' : 'alert');
+          const source = r.source || 'Citizen Report';
+          
+          let timestamp = new Date();
+          if (r.timestamp) {
+            const d = new Date(r.timestamp);
+            if (!isNaN(d.getTime())) {
+              timestamp = d;
+            }
+          }
+          
+          return {
+            ...r,
+            title,
+            location,
+            severity,
+            icon,
+            source,
+            timestamp,
+            x: typeof r.x === 'number' ? r.x : Math.floor(Math.random() * 50) + 25,
+            y: typeof r.y === 'number' ? r.y : Math.floor(Math.random() * 50) + 25,
+            imageUrl: r.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
+            resolved: !!r.resolved
+          };
+        });
+        return sanitized.length > 0 ? sanitized : INITIAL_REPORTS;
       }
     } catch (e) {
       console.error("Failed to load reports from localStorage:", e);
     }
-    return [];
+    return INITIAL_REPORTS;
   });
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [hoveredReportId, setHoveredReportId] = useState<string | null>(null);
