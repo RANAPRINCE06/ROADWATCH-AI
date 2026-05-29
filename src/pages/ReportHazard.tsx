@@ -488,23 +488,65 @@ For each detected hazard:
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+
+    // Map selections & AI Results to Dashboard fields
+    const category = aiResult?.hazardType || selectedHazard;
     
-    // Save report in local storage for persistence
+    let icon: 'alert' | 'lightbulb' | 'hardhat' | 'car' | 'droplets' = 'alert';
+    let severity: 'Critical' | 'Active' | 'Pending' | 'Scheduled' = 'Active';
+    let imageUrl = imageSrc || 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80';
+
+    if (category === 'Pothole') {
+      icon = 'alert';
+      severity = 'Critical';
+      if (!imageSrc) imageUrl = 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80';
+    } else if (category === 'Waterlogging') {
+      icon = 'droplets';
+      severity = 'Critical';
+      if (!imageSrc) imageUrl = 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80';
+    } else if (category === 'Missing Divider') {
+      icon = 'hardhat';
+      severity = 'Active';
+      if (!imageSrc) imageUrl = 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80';
+    } else if (category === 'Traffic Signal') {
+      icon = 'alert';
+      severity = 'Critical';
+      if (!imageSrc) imageUrl = 'https://images.unsplash.com/photo-1510935579761-125207a902f4?auto=format&fit=crop&w=400&q=80';
+    } else if (category === 'Spillage') {
+      icon = 'droplets';
+      severity = 'Active';
+      if (!imageSrc) imageUrl = 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80';
+    } else {
+      icon = 'alert';
+      severity = 'Pending';
+      if (!imageSrc) imageUrl = 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80';
+    }
+
+    // Determine the source: AI-assisted upload or simple citizen submission
+    const source = imageSrc ? 'AI Detected (Citizen)' : 'Citizen Report';
+
     const newReport = {
-      id: `rep-${Date.now()}`,
-      type: aiResult?.hazardType || selectedHazard,
-      severity: aiResult?.severityScore || 5.0,
-      confidence: aiResult?.confidence || 90,
-      urgency: aiResult?.urgency || "High",
-      description: aiResult?.description || `Reported ${selectedHazard} hazard`,
-      timestamp: new Date().toLocaleTimeString(),
-      date: new Date().toLocaleDateString()
+      id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+      title: category,
+      location: locationName || 'San Francisco, CA',
+      severity,
+      icon,
+      source,
+      timestamp: new Date().toISOString(),
+      x: Math.floor(Math.random() * 60) + 20,
+      y: Math.floor(Math.random() * 60) + 20,
+      imageUrl,
     };
-    
-    const existingReports = JSON.parse(localStorage.getItem('roadwatch_reports') || '[]');
-    localStorage.setItem('roadwatch_reports', JSON.stringify([newReport, ...existingReports]));
 
     setTimeout(() => {
+      try {
+        const saved = localStorage.getItem('roadwatch_reports');
+        const reportsList = saved ? JSON.parse(saved) : [];
+        reportsList.unshift(newReport);
+        localStorage.setItem('roadwatch_reports', JSON.stringify(reportsList));
+      } catch (err) {
+        console.error('Failed to save citizen report:', err);
+      }
       setIsSubmitting(false);
       setSubmitted(true);
     }, 1500);
@@ -797,7 +839,15 @@ For each detected hazard:
                   {isSubmitting ? 'Processing...' : submitted ? 'Report Submitted' : 'Submit Report'}
                   {!isSubmitting && !submitted && <Send className="w-5 h-5" />}
                 </button>
-                <p className="text-center text-[11px] text-on-surface-variant px-4 leading-relaxed">
+                {submitted && (
+                  <button
+                    onClick={() => window.location.href = '/dashboard'}
+                    className="w-full mt-3 font-bold py-3 rounded-lg text-sm bg-primary text-white hover:bg-black/90 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm animate-fade-in-up"
+                  >
+                    View on Dashboard ➔
+                  </button>
+                )}
+                <p className="text-center text-[11px] text-on-surface-variant px-4 leading-relaxed mt-4">
                   By submitting, you confirm the visual data is accurate. RoadWatch AI will log this into the municipal safety database and notify local transit authorities.
                 </p>
               </div>
