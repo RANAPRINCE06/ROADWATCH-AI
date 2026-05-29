@@ -161,6 +161,45 @@
   .hazard-pulse {
     animation: pulse-border 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
+  .custom-slider::-webkit-slider-runnable-track {
+    background: transparent;
+    height: 4px;
+  }
+  .custom-slider::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-safety-yellow);
+    border: 2px solid var(--color-primary);
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    transition: all 0.2s ease;
+    margin-top: -5px;
+  }
+  .custom-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    background: #ffffff;
+  }
+  .custom-slider::-moz-range-track {
+    background: transparent;
+    height: 4px;
+  }
+  .custom-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-safety-yellow);
+    border: 2px solid var(--color-primary);
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    transition: all 0.2s ease;
+  }
+  .custom-slider::-moz-range-thumb:hover {
+    transform: scale(1.2);
+    background: #ffffff;
+  }
 }
 
 @keyframes fadeInUp {

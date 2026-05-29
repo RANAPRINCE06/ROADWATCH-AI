@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, AlertOctagon, Map, BarChart3, Bot, Bell, ShieldCheck, Settings, Zap } from 'lucide-react';
+import { LayoutDashboard, AlertOctagon, Map, BarChart3, Bot, Bell, ShieldCheck, Settings, Zap, ChevronLeft } from 'lucide-react';
 
 const mainLinks = [
   { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
@@ -16,14 +16,25 @@ const systemLinks = [
   { name: 'Settings', icon: Settings, path: '/settings' },
 ];
 
-export function Sidebar() {
+export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const location = useLocation();
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-[240px] flex flex-col border-r border-outline-variant z-50 bg-white">
-      <div className="p-6">
-        <h1 className="text-xl font-bold text-primary dark:text-white leading-tight">RoadWatch AI</h1>
-        <p className="text-[11px] text-on-surface-variant font-label-caps uppercase tracking-widest mt-1">City Safety Intelligence</p>
+    <aside className={`fixed left-0 top-0 h-full w-[240px] flex flex-col border-r border-outline-variant z-50 bg-white transition-transform duration-300 ${
+      isOpen ? 'translate-x-0' : '-translate-x-full'
+    }`}>
+      <div className="p-6 flex justify-between items-center">
+        <div>
+          <h1 className="text-xl font-bold text-primary dark:text-white leading-tight">RoadWatch AI</h1>
+          <p className="text-[11px] text-on-surface-variant font-label-caps uppercase tracking-widest mt-1">City Safety Intelligence</p>
+        </div>
+        <button 
+          onClick={onClose}
+          className="p-1.5 hover:bg-surface-container rounded-lg text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center"
+          title="Collapse Sidebar"
+        >
+          <ChevronLeft className="w-5 h-5" />
+        </button>
       </div>
 
       <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">
@@ -33,11 +44,11 @@ export function Sidebar() {
             <Link
               key={link.name}
               to={link.path}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors duration-200 group ${
-                isActive ? 'bg-surface-container-low text-primary font-bold shadow-sm border border-outline-variant/30' : 'text-on-surface-variant hover:bg-surface-container-highest'
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 group ${
+                isActive ? 'bg-primary text-white font-bold shadow-sm' : 'text-on-surface-variant hover:bg-surface-container-highest'
               }`}
             >
-              <link.icon className={`w-[20px] h-[20px] ${isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary'}`} />
+              <link.icon className={`w-[20px] h-[20px] ${isActive ? 'text-white' : 'text-on-surface-variant group-hover:text-primary'}`} />
               <span className="font-body-md">{link.name}</span>
             </Link>
           );
@@ -53,11 +64,11 @@ export function Sidebar() {
             <Link
               key={link.name}
               to={link.path}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors duration-200 group ${
-                isActive ? 'bg-surface-container-low text-primary font-bold shadow-sm border border-outline-variant/30' : 'text-on-surface-variant hover:bg-surface-container-highest'
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 group ${
+                isActive ? 'bg-primary text-white font-bold shadow-sm' : 'text-on-surface-variant hover:bg-surface-container-highest'
               }`}
             >
-              <link.icon className={`w-[20px] h-[20px] ${isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary'}`} />
+              <link.icon className={`w-[20px] h-[20px] ${isActive ? 'text-white' : 'text-on-surface-variant group-hover:text-primary'}`} />
               <span className="font-body-md">{link.name}</span>
             </Link>
           );
