@@ -63,6 +63,12 @@ export function ReportHazard() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
+  // Location states
+  const [locationName, setLocationName] = useState('San Francisco, CA');
+  const [coordinates, setCoordinates] = useState('37.7749° N, 122.4194° W');
+  const [gpsStatus, setGpsStatus] = useState<'ACTIVE' | 'FETCHING' | 'ERROR' | 'EDITING'>('ACTIVE');
+  const [tempLocation, setTempLocation] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -74,6 +80,71 @@ export function ReportHazard() {
     { name: 'Spillage', icon: Droplets },
     { name: 'Other', icon: CircleEllipsis },
   ];
+
+  const fetchUserLocation = () => {
+    if (!navigator.geolocation) {
+      setGpsStatus('ERROR');
+      return;
+    }
+
+    setGpsStatus('FETCHING');
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        const latStr = `${Math.abs(latitude).toFixed(4)}° ${latitude >= 0 ? 'N' : 'S'}`;
+        const lonStr = `${Math.abs(longitude).toFixed(4)}° ${longitude >= 0 ? 'E' : 'W'}`;
+        setCoordinates(`${latStr}, ${lonStr}`);
+
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=12&addressdetails=1`,
+            {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'RoadWatch-AI/1.0'
+              }
+            }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const address = data.address;
+            const city = address.city || address.town || address.village || address.suburb || address.county || '';
+            const state = address.state || '';
+            const country = address.country || '';
+            
+            let label = '';
+            if (city && state) {
+              label = `${city}, ${state}`;
+            } else if (city) {
+              label = city;
+            } else if (state && country) {
+              label = `${state}, ${country}`;
+            } else {
+              label = country || 'Detected Location';
+            }
+            setLocationName(label);
+          } else {
+            setLocationName('Detected Location');
+          }
+          setGpsStatus('ACTIVE');
+        } catch (e) {
+          console.warn("Reverse geocoding failed, using fallback label", e);
+          setLocationName('Detected Location');
+          setGpsStatus('ACTIVE');
+        }
+      },
+      (error) => {
+        console.error("GPS error:", error);
+        setGpsStatus('ERROR');
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+  };
+
+  // Run location fetch at startup
+  useEffect(() => {
+    fetchUserLocation();
+  }, []);
 
   // Cleanup camera stream on unmount
   useEffect(() => {
@@ -406,12 +477,71 @@ Return a valid JSON object matching the following structure (do NOT wrap it in m
           <h2 className="text-3xl font-bold text-primary tracking-tight">Report Road Hazard</h2>
           <p className="text-text-secondary mt-1">Real-time AI-assisted safety reporting system.</p>
         </div>
-        <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg border border-border-subtle shadow-sm">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-          <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">GPS AUTO-DETECTION: ACTIVE</span>
-          <span className="text-sm font-bold text-primary border-l border-r px-3 mx-1">San Francisco, CA (37.7749° N, 122.4194° W)</span>
-          <button className="text-primary hover:underline text-sm font-semibold">Edit Location</button>
-        </div>
+        {gpsStatus === 'EDITING' ? (
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (tempLocation.trim()) {
+                setLocationName(tempLocation);
+                setCoordinates('Manually Entered');
+                setGpsStatus('ACTIVE');
+              }
+            }}
+            className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg border border-border-subtle shadow-sm"
+          >
+            <input 
+              type="text"
+              value={tempLocation}
+              onChange={(e) => setTempLocation(e.target.value)}
+              placeholder="Enter location (e.g. city, state)"
+              className="px-2 py-1 border border-border-subtle rounded text-xs text-primary focus:outline-none focus:ring-1 focus:ring-safety-yellow bg-surface-bright"
+              autoFocus
+            />
+            <button type="submit" className="text-xs bg-primary text-white px-3 py-1 rounded font-bold hover:opacity-90 transition-all">
+              Save
+            </button>
+            <button 
+              type="button" 
+              onClick={() => setGpsStatus('ACTIVE')}
+              className="text-xs text-on-surface-variant hover:text-primary transition-colors"
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg border border-border-subtle shadow-sm">
+            <div className={`w-2 h-2 rounded-full ${
+              gpsStatus === 'ACTIVE' ? 'bg-green-500 animate-pulse' :
+              gpsStatus === 'FETCHING' ? 'bg-yellow-500 animate-ping' : 'bg-red-500'
+            }`}></div>
+            <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
+              {gpsStatus === 'ACTIVE' ? 'GPS AUTO-DETECTION: ACTIVE' :
+               gpsStatus === 'FETCHING' ? 'GPS AUTO-DETECTION: FETCHING...' : 'GPS AUTO-DETECTION: FAILED'}
+            </span>
+            <span className="text-sm font-bold text-primary border-l border-r px-3 mx-1">
+              {locationName} {coordinates && `(${coordinates})`}
+            </span>
+            <div className="flex gap-2">
+              {gpsStatus === 'ERROR' && (
+                <button 
+                  onClick={fetchUserLocation}
+                  className="text-primary hover:underline text-sm font-semibold flex items-center gap-1 mr-2"
+                >
+                  Retry
+                </button>
+              )}
+              <button 
+                onClick={() => {
+                  setTempLocation(locationName);
+                  setGpsStatus('EDITING');
+                }}
+                className="text-primary hover:underline text-sm font-semibold"
+              >
+                Edit Location
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
