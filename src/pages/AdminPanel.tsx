@@ -1,38 +1,112 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Database, ShieldAlert, Cpu, Terminal, Play, RotateCcw, AlertTriangle } from 'lucide-react';
-
-interface TelemetryLog {
-  time: string;
-  module: string;
-  event: string;
-  status: 'SUCCESS' | 'WARN' | 'INFO';
-}
+import { getLogs, addLog, clearLogs, saveReports, getReports, TelemetryLog } from '../utils/storage';
 
 export function AdminPanel() {
-  const [logs, setLogs] = useState<TelemetryLog[]>([
-    { time: '22:48:10', module: 'GIS Engine', event: 'Google Maps API authorized successfully', status: 'SUCCESS' },
-    { time: '22:45:32', module: 'Routing Controller', event: 'Alternative detour route calculated for Bayfront Ave', status: 'INFO' },
-    { time: '22:40:05', module: 'Edge Node 7G', event: 'High temperature warning in ventilation duct', status: 'WARN' },
-    { time: '22:38:12', module: 'AI Mesh Model', event: 'Image inference request resolved in 12ms', status: 'SUCCESS' },
-    { time: '22:30:45', module: 'Database Core', event: 'Pothole boundary logs successfully synced with municipal GIS', status: 'SUCCESS' }
-  ]);
+  const [logs, setLogs] = useState<TelemetryLog[]>(() => getLogs());
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleSync = () => {
+      setLogs(getLogs());
+    };
+    window.addEventListener('roadwatch-logs-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-logs-updated', handleSync);
+    };
+  }, []);
 
   const triggerAction = (actionName: string) => {
     setActionMessage(`Executing: ${actionName}...`);
     setTimeout(() => {
       if (actionName === 'Seed Mock Incidents') {
-        const newLog: TelemetryLog = {
-          time: new Date().toTimeString().split(' ')[0],
-          module: 'Admin Command',
-          event: 'Mock safety hazard data injected into live state',
-          status: 'INFO'
-        };
-        setLogs(prev => [newLog, ...prev]);
+        const seedReports = [
+          {
+            id: 'rep-1',
+            title: 'Severe Asphalt Pothole',
+            location: 'Sector 4, Orchard Rd',
+            severity: 'Critical' as const,
+            icon: 'alert' as const,
+            source: 'AI Detected',
+            timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            x: 35,
+            y: 50,
+            lat: 1.3048,
+            lng: 103.8318,
+            imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
+            description: 'Large road crater, depth approx 10cm, causing lane diversions.'
+          },
+          {
+            id: 'rep-2',
+            title: 'Water Accumulation (15cm)',
+            location: 'Bayfront Ave North',
+            severity: 'Critical' as const,
+            icon: 'droplets' as const,
+            source: 'Sensor Report',
+            timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            x: 65,
+            y: 30,
+            lat: 1.2847,
+            lng: 103.8590,
+            imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
+            description: 'Water pooling on left lane. Traffic speed reduced to 20 km/h.'
+          },
+          {
+            id: 'rep-3',
+            title: 'Road Construction Works',
+            location: 'Cross St Junction',
+            severity: 'Active' as const,
+            icon: 'hardhat' as const,
+            source: 'Admin Update',
+            timestamp: new Date(Date.now() - 75 * 60 * 1000).toISOString(),
+            x: 80,
+            y: 75,
+            lat: 1.2789,
+            lng: 103.8485,
+            imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
+            description: 'Lane narrowing due to utility maintenance. Ends in 2 days.'
+          },
+          {
+            id: 'rep-4',
+            title: 'Minor Road Surface Fissures',
+            location: 'Marina Boulevard',
+            severity: 'Pending' as const,
+            icon: 'alert' as const,
+            source: 'Citizen Report',
+            timestamp: new Date(Date.now() - 180 * 60 * 1000).toISOString(),
+            x: 20,
+            y: 25,
+            lat: 1.2764,
+            lng: 103.8545,
+            imageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
+            description: 'Cracks widening on shoulder. Scheduled for maintenance next cycle.'
+          },
+          {
+            id: 'rep-5',
+            title: 'Drain Overflow Risk',
+            location: 'Geylang Rd Junction',
+            severity: 'Active' as const,
+            icon: 'droplets' as const,
+            source: 'Sensor Report',
+            timestamp: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+            x: 50,
+            y: 60,
+            lat: 1.3120,
+            lng: 103.8760,
+            imageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
+            description: 'Drainage debris causing minor water buildup on curbside.'
+          }
+        ];
+        saveReports(seedReports);
+        addLog('Admin Command', 'Mock safety hazard data injected into live state', 'INFO');
         setActionMessage('Mock incidents successfully seeded!');
       } else if (actionName === 'Clear Live Cache') {
+        saveReports([]);
+        clearLogs();
+        addLog('Admin Command', 'GIS database and cache cleared successfully', 'WARN');
         setActionMessage('GIS and map polyline cache cleared successfully.');
       } else {
+        addLog('AI Model Controller', 'Inference sweep completed across 1,280 active edge nodes', 'SUCCESS');
         setActionMessage('AI Computer Vision model sweep completed.');
       }
       setTimeout(() => setActionMessage(null), 3000);

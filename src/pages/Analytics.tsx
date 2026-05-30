@@ -1,27 +1,97 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, Cpu, Server, Activity, Timer, ChevronDown } from 'lucide-react';
+import { getReports, Report } from '../utils/storage';
 
 export function Analytics() {
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
 
-  const weeklyData = [
-    { day: 'Mon', count: 18, details: '10 Potholes, 5 Floods, 3 Obstacles' },
-    { day: 'Tue', count: 24, details: '12 Potholes, 8 Floods, 4 Obstacles' },
-    { day: 'Wed', count: 32, details: '18 Potholes, 10 Floods, 4 Obstacles' },
-    { day: 'Thu', count: 20, details: '11 Potholes, 6 Floods, 3 Obstacles' },
-    { day: 'Fri', count: 42, details: '25 Potholes, 12 Floods, 5 Obstacles' },
-    { day: 'Sat', count: 15, details: '8 Potholes, 4 Floods, 3 Obstacles' },
-    { day: 'Sun', count: 11, details: '5 Potholes, 3 Floods, 3 Obstacles' }
-  ];
+  const [reports, setReports] = useState<Report[]>(() => getReports());
+
+  useEffect(() => {
+    const handleSync = () => {
+      setReports(getReports());
+    };
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
+
+  const activeReports = reports.filter(r => !r.resolved);
+  const totalActive = activeReports.length;
+
+  const countByType = {
+    Pothole: 0,
+    Flooding: 0,
+    Obstacle: 0
+  };
+
+  activeReports.forEach(r => {
+    const titleLower = r.title.toLowerCase();
+    if (titleLower.includes('pothole') || r.icon === 'alert') {
+      countByType.Pothole++;
+    } else if (titleLower.includes('waterlogging') || titleLower.includes('flood') || r.icon === 'droplets') {
+      countByType.Flooding++;
+    } else {
+      countByType.Obstacle++;
+    }
+  });
 
   const distributionData = [
-    { type: 'Pothole', percentage: 55, color: '#FACC15', details: '68 Detections' },
-    { type: 'Flooding', percentage: 30, color: '#3B82F6', details: '37 Detections' },
-    { type: 'Obstacle', percentage: 15, color: '#F97316', details: '19 Detections' }
+    { 
+      type: 'Pothole', 
+      percentage: totalActive > 0 ? Math.round((countByType.Pothole / totalActive) * 100) : 0, 
+      color: '#FACC15', 
+      details: `${countByType.Pothole} Detections` 
+    },
+    { 
+      type: 'Flooding', 
+      percentage: totalActive > 0 ? Math.round((countByType.Flooding / totalActive) * 100) : 0, 
+      color: '#3B82F6', 
+      details: `${countByType.Flooding} Detections` 
+    },
+    { 
+      type: 'Obstacle', 
+      percentage: totalActive > 0 ? Math.max(0, 100 - Math.round((countByType.Pothole / totalActive) * 100) - Math.round((countByType.Flooding / totalActive) * 100)) : 0, 
+      color: '#F97316', 
+      details: `${countByType.Obstacle} Detections` 
+    }
   ];
 
-  const maxVal = Math.max(...weeklyData.map(d => d.count));
+  const weekdayCounts = Array(7).fill(0);
+  const weekdayBreakdowns = Array(7).fill(null).map(() => ({ pothole: 0, flooding: 0, obstacle: 0 }));
+
+  reports.forEach(r => {
+    const date = new Date(r.timestamp);
+    const day = date.getDay(); // 0 is Sunday, 1 is Monday, etc.
+    const index = day === 0 ? 6 : day - 1; // map Monday to 0, Sunday to 6
+    
+    weekdayCounts[index]++;
+    
+    const titleLower = r.title.toLowerCase();
+    if (titleLower.includes('pothole') || r.icon === 'alert') {
+      weekdayBreakdowns[index].pothole++;
+    } else if (titleLower.includes('waterlogging') || titleLower.includes('flood') || r.icon === 'droplets') {
+      weekdayBreakdowns[index].flooding++;
+    } else {
+      weekdayBreakdowns[index].obstacle++;
+    }
+  });
+
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const weeklyData = days.map((day, idx) => {
+    const count = weekdayCounts[idx];
+    const bp = weekdayBreakdowns[idx];
+    
+    const details = count > 0 
+      ? `${bp.pothole} Potholes, ${bp.flooding} Floods, ${bp.obstacle} Obstacles`
+      : '0 Potholes, 0 Floods, 0 Obstacles';
+
+    return { day, count, details };
+  });
+
+  const maxVal = Math.max(...weeklyData.map(d => d.count), 1);
 
   return (
     <div className="p-8 max-w-[1440px] mx-auto pb-32">
@@ -148,7 +218,7 @@ export function Analytics() {
           <div className="flex justify-center items-center relative h-48">
             {/* Simple SVG Donut Chart */}
             <svg width="180" height="180" viewBox="0 0 40 40" className="rotate-[-90deg]">
-              {/* Pothole slice: 55% -> dasharray="22 18" (circumference is 2*pi*r, r=15.915, circ=100) */}
+              {/* Pothole slice */}
               <circle
                 cx="20"
                 cy="20"
@@ -156,13 +226,13 @@ export function Analytics() {
                 fill="transparent"
                 stroke="#FACC15"
                 strokeWidth="5"
-                strokeDasharray="55 45"
+                strokeDasharray={`${distributionData[0].percentage} ${100 - distributionData[0].percentage}`}
                 strokeDashoffset="0"
                 className="cursor-pointer hover:stroke-[6] transition-all"
                 onMouseEnter={() => setHoveredSlice('Pothole')}
                 onMouseLeave={() => setHoveredSlice(null)}
               />
-              {/* Flooding slice: 30% -> dasharray="30 70" */}
+              {/* Flooding slice */}
               <circle
                 cx="20"
                 cy="20"
@@ -170,13 +240,13 @@ export function Analytics() {
                 fill="transparent"
                 stroke="#3B82F6"
                 strokeWidth="5"
-                strokeDasharray="30 70"
-                strokeDashoffset="-55"
+                strokeDasharray={`${distributionData[1].percentage} ${100 - distributionData[1].percentage}`}
+                strokeDashoffset={`-${distributionData[0].percentage}`}
                 className="cursor-pointer hover:stroke-[6] transition-all"
                 onMouseEnter={() => setHoveredSlice('Flooding')}
                 onMouseLeave={() => setHoveredSlice(null)}
               />
-              {/* Obstacle slice: 15% -> dasharray="15 85" */}
+              {/* Obstacle slice */}
               <circle
                 cx="20"
                 cy="20"
@@ -184,8 +254,8 @@ export function Analytics() {
                 fill="transparent"
                 stroke="#F97316"
                 strokeWidth="5"
-                strokeDasharray="15 85"
-                strokeDashoffset="-85"
+                strokeDasharray={`${distributionData[2].percentage} ${100 - distributionData[2].percentage}`}
+                strokeDashoffset={`-${distributionData[0].percentage + distributionData[1].percentage}`}
                 className="cursor-pointer hover:stroke-[6] transition-all"
                 onMouseEnter={() => setHoveredSlice('Obstacle')}
                 onMouseLeave={() => setHoveredSlice(null)}
@@ -198,7 +268,7 @@ export function Analytics() {
               <span className="text-xl font-bold text-primary">
                 {hoveredSlice 
                   ? `${distributionData.find(d => d.type === hoveredSlice)?.percentage}%`
-                  : '124'
+                  : totalActive
                 }
               </span>
             </div>

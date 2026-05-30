@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bot, FileText, Download, RefreshCw, CheckCircle2, ChevronRight, Eye, AlertTriangle } from 'lucide-react';
 
 interface SafetyReport {
@@ -13,38 +13,56 @@ interface SafetyReport {
 }
 
 export function AIReportDetails() {
-  const [reports, setReports] = useState<SafetyReport[]>([
-    {
-      id: 'rep-1',
-      title: 'Sector 4: Orchard Road Surface Assessment',
-      date: 'May 29, 2026',
-      category: 'Infrastructure',
-      decayIndex: 8.4,
-      safetyRating: 'Hazardous',
-      summary: 'Heavy asphalt structural deterioration, depth profiling reveals multiple sub-layer fissures with immediate water pooling risks.',
-      aiInsights: 'Recommend localized resurfacing within 24 hours. Transit speeds should remain capped at 30km/h to mitigate tyre blowouts.'
-    },
-    {
-      id: 'rep-2',
-      title: 'Bayfront Ave Drainage Vulnerability Review',
-      date: 'May 28, 2026',
-      category: 'Drainage',
-      decayIndex: 5.8,
-      safetyRating: 'Warning',
-      summary: 'Curbside catch basins show 40% debris obstruction. Saturated soil limits runoff absorption rate during heavy precipitation.',
-      aiInsights: 'Recommend deploying municipal sanitation crews for clearing catchment screens. Heavy rain expected in 18 hours.'
-    },
-    {
-      id: 'rep-3',
-      title: 'Marina Coastal Expressway Traffic Flow Optimization',
-      date: 'May 25, 2026',
-      category: 'Traffic Flow',
-      decayIndex: 2.1,
-      safetyRating: 'Safe',
-      summary: 'Edge node sensors show lane utilization is balanced. Average speeds maintained at 78 km/h. Fissure indexes remain below limits.',
-      aiInsights: 'Standard operations normal. Continue scheduling monthly baseline laser telemetry profile sweeps.'
+  const [reports, setReports] = useState<SafetyReport[]>(() => {
+    try {
+      const saved = localStorage.getItem('roadwatch_ai_reports');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error("Failed to load AI reports:", e);
     }
-  ]);
+    return [
+      {
+        id: 'rep-1',
+        title: 'Sector 4: Orchard Road Surface Assessment',
+        date: 'May 29, 2026',
+        category: 'Infrastructure',
+        decayIndex: 8.4,
+        safetyRating: 'Hazardous',
+        summary: 'Heavy asphalt structural deterioration, depth profiling reveals multiple sub-layer fissures with immediate water pooling risks.',
+        aiInsights: 'Recommend localized resurfacing within 24 hours. Transit speeds should remain capped at 30km/h to mitigate tyre blowouts.'
+      },
+      {
+        id: 'rep-2',
+        title: 'Bayfront Ave Drainage Vulnerability Review',
+        date: 'May 28, 2026',
+        category: 'Drainage',
+        decayIndex: 5.8,
+        safetyRating: 'Warning',
+        summary: 'Curbside catch basins show 40% debris obstruction. Saturated soil limits runoff absorption rate during heavy precipitation.',
+        aiInsights: 'Recommend deploying municipal sanitation crews for clearing catchment screens. Heavy rain expected in 18 hours.'
+      },
+      {
+        id: 'rep-3',
+        title: 'Marina Coastal Expressway Traffic Flow Optimization',
+        date: 'May 25, 2026',
+        category: 'Traffic Flow',
+        decayIndex: 2.1,
+        safetyRating: 'Safe',
+        summary: 'Edge node sensors show lane utilization is balanced. Average speeds maintained at 78 km/h. Fissure indexes remain below limits.',
+        aiInsights: 'Standard operations normal. Continue scheduling monthly baseline laser telemetry profile sweeps.'
+      }
+    ];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('roadwatch_ai_reports', JSON.stringify(reports));
+    } catch (e) {
+      console.error("Failed to save AI reports:", e);
+    }
+  }, [reports]);
 
   const [selectedReportId, setSelectedReportId] = useState<string>('rep-1');
   const [isGenerating, setIsGenerating] = useState(false);

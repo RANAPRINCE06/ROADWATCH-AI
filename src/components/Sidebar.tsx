@@ -39,7 +39,7 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 
       <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">
         {mainLinks.map((link) => {
-          const isActive = location.pathname.startsWith(link.path);
+          const isActive = location.pathname === link.path;
           return (
             <Link
               key={link.name}
@@ -59,7 +59,7 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
         </div>
 
         {systemLinks.map((link) => {
-          const isActive = location.pathname.startsWith(link.path);
+          const isActive = location.pathname === link.path;
           return (
             <Link
               key={link.name}

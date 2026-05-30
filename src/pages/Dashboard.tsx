@@ -15,6 +15,7 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react';
+import { getReports, resolveReport as storageResolveReport, addReport as storageAddReport } from '../utils/storage';
 
 interface Report {
   id: string;
@@ -30,56 +31,7 @@ interface Report {
   resolved?: boolean;
 }
 
-const INITIAL_REPORTS: Report[] = [
-  {
-    id: 'rep-1',
-    title: 'Severe Pothole',
-    location: 'Oak St. Intersection',
-    severity: 'Critical',
-    icon: 'alert',
-    source: 'AI Detected',
-    timestamp: new Date(Date.now() - 2 * 60 * 1000), // 2 mins ago
-    x: 35,
-    y: 50,
-    imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-2',
-    title: 'Streetlight Failure',
-    location: '4th Avenue East',
-    severity: 'Pending',
-    icon: 'lightbulb',
-    source: 'Sensor Report',
-    timestamp: new Date(Date.now() - 14 * 60 * 1000), // 14 mins ago
-    x: 65,
-    y: 30,
-    imageUrl: 'https://images.unsplash.com/photo-1509024644558-2f56ce76c490?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-3',
-    title: 'Road Work Started',
-    location: 'Downtown Bypass',
-    severity: 'Scheduled',
-    icon: 'hardhat',
-    source: 'Admin Update',
-    timestamp: new Date(Date.now() - 60 * 60 * 1000), // 1 hour ago
-    x: 80,
-    y: 75,
-    imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-4',
-    title: 'Minor Collision',
-    location: 'North Circular Rd',
-    severity: 'Active',
-    icon: 'car',
-    source: 'Camera #42',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-    x: 20,
-    y: 25,
-    imageUrl: 'https://images.unsplash.com/photo-1590674899484-d5640e854abe?auto=format&fit=crop&w=400&q=80',
-  },
-];
+const INITIAL_REPORTS: Report[] = [];
 
 const HAZARD_TEMPLATES = [
   // Pothole
@@ -108,53 +60,45 @@ const HAZARD_TEMPLATES = [
 ] as const;
 
 export function Dashboard() {
-  const [reports, setReports] = useState<Report[]>(() => {
-    try {
-      const saved = localStorage.getItem('roadwatch_reports');
-      if (saved) {
-        const parsed = JSON.parse(saved) as any[];
-        const sanitized = parsed.map(r => {
-          // Normalize and safeguard all properties to prevent undefined crash bugs
-          const title = r.title || r.type || 'Road Hazard';
-          const location = r.location || 'Reported Area';
-          
-          let severity = r.severity;
-          if (typeof severity !== 'string' || !['Critical', 'Active', 'Pending', 'Scheduled'].includes(severity)) {
-            severity = 'Active';
-          }
-          
-          const icon = r.icon || (r.type === 'Waterlogging' ? 'droplets' : 'alert');
-          const source = r.source || 'Citizen Report';
-          
-          let timestamp = new Date();
-          if (r.timestamp) {
-            const d = new Date(r.timestamp);
-            if (!isNaN(d.getTime())) {
-              timestamp = d;
-            }
-          }
-          
-          return {
-            ...r,
-            title,
-            location,
-            severity,
-            icon,
-            source,
-            timestamp,
-            x: typeof r.x === 'number' ? r.x : Math.floor(Math.random() * 50) + 25,
-            y: typeof r.y === 'number' ? r.y : Math.floor(Math.random() * 50) + 25,
-            imageUrl: r.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-            resolved: !!r.resolved
-          };
-        });
-        return sanitized.length > 0 ? sanitized : INITIAL_REPORTS;
+  const loadReportsFromStorage = (): Report[] => {
+    return getReports().map(r => {
+      // Normalize and safeguard all properties to prevent undefined crash bugs
+      const title = r.title || 'Road Hazard';
+      const location = r.location || 'Reported Area';
+      
+      let severity = r.severity;
+      if (typeof severity !== 'string' || !['Critical', 'Active', 'Pending', 'Scheduled'].includes(severity)) {
+        severity = 'Active';
       }
-    } catch (e) {
-      console.error("Failed to load reports from localStorage:", e);
-    }
-    return INITIAL_REPORTS;
-  });
+      
+      const icon = r.icon || 'alert';
+      const source = r.source || 'Citizen Report';
+      
+      let timestamp = new Date();
+      if (r.timestamp) {
+        const d = new Date(r.timestamp);
+        if (!isNaN(d.getTime())) {
+          timestamp = d;
+        }
+      }
+      
+      return {
+        ...r,
+        title,
+        location,
+        severity,
+        icon,
+        source,
+        timestamp,
+        x: typeof r.x === 'number' ? r.x : Math.floor(Math.random() * 50) + 25,
+        y: typeof r.y === 'number' ? r.y : Math.floor(Math.random() * 50) + 25,
+        imageUrl: r.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
+        resolved: !!r.resolved
+      };
+    });
+  };
+
+  const [reports, setReports] = useState<Report[]>(loadReportsFromStorage);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [hoveredReportId, setHoveredReportId] = useState<string | null>(null);
   const [aiAccuracy, setAiAccuracy] = useState<number>(98.5);
@@ -169,14 +113,16 @@ export function Dashboard() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Save reports to localStorage
+  // Sync state with shared localStorage event in real time
   useEffect(() => {
-    try {
-      localStorage.setItem('roadwatch_reports', JSON.stringify(reports));
-    } catch (e) {
-      console.error("Failed to save reports to localStorage:", e);
-    }
-  }, [reports]);
+    const handleSync = () => {
+      setReports(loadReportsFromStorage());
+    };
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
 
   // Reset panning on zoom out to 1x
   useEffect(() => {
@@ -263,20 +209,35 @@ export function Dashboard() {
     const x = Math.floor(Math.random() * 60) + 20;
     const y = Math.floor(Math.random() * 60) + 20;
     
-    const newReport: Report = {
-      id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+    let lat = 1.2950;
+    let lng = 103.8500;
+    if (template.title.toLowerCase().includes('pothole')) {
+      lat = 1.3048 + (Math.random() - 0.5) * 0.01;
+      lng = 103.8318 + (Math.random() - 0.5) * 0.01;
+    } else if (template.title.toLowerCase().includes('water')) {
+      lat = 1.2847 + (Math.random() - 0.5) * 0.01;
+      lng = 103.8590 + (Math.random() - 0.5) * 0.01;
+    } else if (template.title.toLowerCase().includes('divider')) {
+      lat = 1.2789 + (Math.random() - 0.5) * 0.01;
+      lng = 103.8485 + (Math.random() - 0.5) * 0.01;
+    } else {
+      lat = 1.3120 + (Math.random() - 0.5) * 0.01;
+      lng = 103.8760 + (Math.random() - 0.5) * 0.01;
+    }
+
+    storageAddReport({
       title: template.title,
       location: template.location,
       severity: template.severity,
       icon: template.icon,
       source: template.source,
-      timestamp: new Date(),
       x,
       y,
+      lat,
+      lng,
       imageUrl: template.imageUrl,
-    };
-
-    setReports(prev => [newReport, ...prev]);
+      description: `Simulated live hazard detection of ${template.title}.`,
+    });
     
     // Toast notification
     setJustNotification({
@@ -291,10 +252,9 @@ export function Dashboard() {
   const resolveReport = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     
-    // Find the report to show in the success toast notification
     const reportToResolve = reports.find(r => r.id === id);
-    
-    setReports(prev => prev.filter(r => r.id !== id));
+    storageResolveReport(id);
+
     if (selectedReportId === id) {
       setSelectedReportId(null);
     }

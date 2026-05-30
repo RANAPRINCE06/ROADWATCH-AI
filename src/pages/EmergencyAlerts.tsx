@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertOctagon, Flame, ShieldAlert, CheckCircle2, UserCheck, Trash2, Send, Plus } from 'lucide-react';
+import { getReports, resolveReport as storageResolveReport, addReport as storageAddReport, deleteReport, updateReportStatus, Report } from '../utils/storage';
 
 interface AlertItem {
   id: string;
@@ -13,88 +14,112 @@ interface AlertItem {
 }
 
 export function EmergencyAlerts() {
-  const [alerts, setAlerts] = useState<AlertItem[]>([
-    {
-      id: 'alert-1',
-      type: 'flood',
-      title: 'Flash Flood: Sector 4 Underpass',
-      location: 'Orchard Rd Southbound',
-      severity: 'Critical',
-      status: 'Active',
-      time: '2m ago',
-      description: 'Water depth exceeded 25cm. Road impassable for standard passenger vehicles. Drainage pumps fully active.'
-    },
-    {
-      id: 'alert-2',
-      type: 'structural',
-      title: 'Subsidence: Bridge I-95 Support',
-      location: 'Downtown Expressway Pillar 4',
-      severity: 'Critical',
-      status: 'Acknowledged',
-      time: '18m ago',
-      description: 'AI telemetry reports a 3cm settlement. Structural engineers dispatched for visual safety inspections.'
-    },
-    {
-      id: 'alert-3',
-      type: 'traffic',
-      title: 'Multi-Vehicle Collision: Exit 12',
-      location: 'Pan Island Expressway Westbound',
-      severity: 'Major',
-      status: 'Active',
-      time: '10m ago',
-      description: 'Three vehicles collided on middle lanes. Transit delays estimated at 25 minutes. Ambulance deployed.'
-    },
-    {
-      id: 'alert-4',
-      type: 'fire',
-      title: 'High-Temperature Spike: Cable Duct',
-      location: 'Marina Coastal Expressway Tunnel',
-      severity: 'Minor',
-      status: 'Resolved',
-      time: '1h ago',
-      description: 'Ventilation sensors triggered thermal alert. Resolved automatically by system backup cooling loops.'
+  const [reports, setReports] = useState<Report[]>(() => getReports());
+
+  useEffect(() => {
+    const handleSync = () => {
+      setReports(getReports());
+    };
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
+
+  const formatTimeAgo = (date: Date) => {
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString();
+  };
+
+  const alerts: AlertItem[] = reports.map(r => {
+    let type: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
+    const titleLower = r.title.toLowerCase();
+    if (r.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
+      type = 'flood';
+    } else if (r.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
+      type = 'structural';
+    } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
+      type = 'fire';
+    } else {
+      type = 'traffic';
     }
-  ]);
+
+    let severity: 'Critical' | 'Major' | 'Minor' = 'Minor';
+    if (r.severity === 'Critical') severity = 'Critical';
+    else if (r.severity === 'Active') severity = 'Major';
+
+    let status: 'Active' | 'Acknowledged' | 'Resolved' = 'Active';
+    if (r.resolved) status = 'Resolved';
+    else if (r.acknowledged) status = 'Acknowledged';
+
+    const timeStr = r.timestamp ? formatTimeAgo(new Date(r.timestamp)) : 'Just now';
+
+    return {
+      id: r.id,
+      type,
+      title: r.title,
+      location: r.location,
+      severity,
+      status,
+      time: timeStr,
+      description: r.description || `Visual evidence shows active ${r.title} condition. Crews and telemetry dispatched.`
+    };
+  });
 
   const [activeTab, setActiveTab] = useState<'All' | 'Critical' | 'Major' | 'Minor'>('All');
   const [filterStatus, setFilterStatus] = useState<'All' | 'Active' | 'Acknowledged' | 'Resolved'>('All');
 
   // Trigger simulated new alert
   const handleSimulateAlert = () => {
-    const simulationTemplates: AlertItem[] = [
+    const simulationTemplates = [
       {
-        id: `alert-${Date.now()}`,
-        type: 'flood',
         title: 'Waterlogging: East Coast Expressway',
         location: 'Bayfront Connector',
-        severity: 'Major',
-        status: 'Active',
-        time: 'Just now',
+        severity: 'Active' as const,
+        icon: 'droplets' as const,
         description: 'Heavy precipitation causing roadside pooling on lanes 3 and 4. Speeds capped at 40km/h.'
       },
       {
-        id: `alert-${Date.now()}`,
-        type: 'structural',
-        title: 'Fallen Tree: Boulevard Lane Block',
-        location: 'Sector 7, Napier Road',
-        severity: 'Minor',
-        status: 'Active',
-        time: 'Just now',
-        description: 'Heavy canopy collapse blocking sidewalk and bus bay. Maintenance crews en route.'
+        title: 'Subsidence: Bridge Support Settling',
+        location: 'Downtown Expressway Pillar 4',
+        severity: 'Critical' as const,
+        icon: 'hardhat' as const,
+        description: 'AI telemetry reports a 3cm settlement. Structural engineers dispatched for visual safety inspections.'
       }
     ];
-    const newAlert = simulationTemplates[Math.floor(Math.random() * simulationTemplates.length)];
-    setAlerts((prev) => [newAlert, ...prev]);
+
+    const template = simulationTemplates[Math.floor(Math.random() * simulationTemplates.length)];
+    
+    storageAddReport({
+      title: template.title,
+      location: template.location,
+      severity: template.severity,
+      icon: template.icon,
+      source: 'AI Edge Node',
+      x: Math.floor(Math.random() * 60) + 20,
+      y: Math.floor(Math.random() * 60) + 20,
+      lat: 1.2847 + (Math.random() - 0.5) * 0.02,
+      lng: 103.8590 + (Math.random() - 0.5) * 0.02,
+      imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
+      description: template.description
+    });
   };
 
   const handleUpdateStatus = (id: string, newStatus: 'Active' | 'Acknowledged' | 'Resolved') => {
-    setAlerts((prev) =>
-      prev.map((alert) => (alert.id === id ? { ...alert, status: newStatus } : alert))
-    );
+    if (newStatus === 'Resolved') {
+      storageResolveReport(id);
+    } else if (newStatus === 'Acknowledged') {
+      updateReportStatus(id, { acknowledged: true });
+    }
   };
 
   const handleDeleteAlert = (id: string) => {
-    setAlerts((prev) => prev.filter((alert) => alert.id !== id));
+    deleteReport(id);
   };
 
   const filteredAlerts = alerts.filter((alert) => {

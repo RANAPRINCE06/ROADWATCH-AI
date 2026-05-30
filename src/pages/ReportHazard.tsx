@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { addReport } from '../utils/storage';
 import { 
   UploadCloud, 
   Camera, 
@@ -66,6 +67,8 @@ export function ReportHazard() {
   // Location states
   const [locationName, setLocationName] = useState('San Francisco, CA');
   const [coordinates, setCoordinates] = useState('37.7749° N, 122.4194° W');
+  const [lat, setLat] = useState(1.3048); // default to Singapore region coordinates
+  const [lng, setLng] = useState(103.8318);
   const [gpsStatus, setGpsStatus] = useState<'ACTIVE' | 'FETCHING' | 'ERROR' | 'EDITING'>('ACTIVE');
   const [tempLocation, setTempLocation] = useState('');
 
@@ -91,6 +94,8 @@ export function ReportHazard() {
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
+        setLat(latitude);
+        setLng(longitude);
         const latStr = `${Math.abs(latitude).toFixed(4)}° ${latitude >= 0 ? 'N' : 'S'}`;
         const lonStr = `${Math.abs(longitude).toFixed(4)}° ${longitude >= 0 ? 'E' : 'W'}`;
         setCoordinates(`${latStr}, ${lonStr}`);
@@ -526,24 +531,22 @@ For each detected hazard:
     const source = imageSrc ? 'AI Detected (Citizen)' : 'Citizen Report';
 
     const newReport = {
-      id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
       title: category,
       location: locationName || 'San Francisco, CA',
       severity,
       icon,
       source,
-      timestamp: new Date().toISOString(),
       x: Math.floor(Math.random() * 60) + 20,
       y: Math.floor(Math.random() * 60) + 20,
+      lat,
+      lng,
       imageUrl,
+      description: aiResult?.description || `Reported ${category} hazard.`,
     };
 
     setTimeout(() => {
       try {
-        const saved = localStorage.getItem('roadwatch_reports');
-        const reportsList = saved ? JSON.parse(saved) : [];
-        reportsList.unshift(newReport);
-        localStorage.setItem('roadwatch_reports', JSON.stringify(reportsList));
+        addReport(newReport);
       } catch (err) {
         console.error('Failed to save citizen report:', err);
       }

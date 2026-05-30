@@ -1,19 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Save, Bell, Eye, Database, ShieldAlert, Sparkles, CheckCircle2 } from 'lucide-react';
+import { getSettings, saveSettings } from '../utils/storage';
 
 export function Settings() {
-  const [theme, setTheme] = useState('Light Theme');
-  const [threshold, setThreshold] = useState('High & Critical Only');
-  const [refreshInterval, setRefreshInterval] = useState('30 Seconds');
+  const currentSettings = getSettings();
+
+  const [theme, setTheme] = useState(currentSettings.theme);
+  const [threshold, setThreshold] = useState(currentSettings.threshold);
+  const [refreshInterval, setRefreshInterval] = useState(currentSettings.refreshInterval);
   
-  const [desktopAlerts, setDesktopAlerts] = useState(true);
-  const [soundAlerts, setSoundAlerts] = useState(false);
-  const [aiAnalysisDepth, setAiAnalysisDepth] = useState(true);
+  const [desktopAlerts, setDesktopAlerts] = useState(currentSettings.desktopAlerts);
+  const [soundAlerts, setSoundAlerts] = useState(currentSettings.soundAlerts);
+  const [aiAnalysisDepth, setAiAnalysisDepth] = useState(currentSettings.aiAnalysisDepth);
 
   const [showToast, setShowToast] = useState(false);
 
+  // Apply theme change locally
+  useEffect(() => {
+    if (theme === 'Dark Theme' || theme === 'Slate/Immersive Mode') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    saveSettings({
+      theme,
+      threshold,
+      refreshInterval,
+      desktopAlerts,
+      soundAlerts,
+      aiAnalysisDepth
+    });
     setShowToast(true);
     setTimeout(() => {
       setShowToast(false);

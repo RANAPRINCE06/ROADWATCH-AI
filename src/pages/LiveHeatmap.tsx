@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getReports, resolveReport as storageResolveReport, addReport as storageAddReport, Report } from '../utils/storage';
 import { 
   Layers, 
   Eye, 
@@ -174,12 +175,7 @@ interface HeatmapZone {
   baseRadius: number; // base size in pixels
 }
 
-const heatmapZones: HeatmapZone[] = [
-  { id: 'hz1', type: 'pothole', lat: 1.3048, lng: 103.8318, severity: 'High', baseRadius: 160 }, // Orchard Rd
-  { id: 'hz2', type: 'flooding', lat: 1.2847, lng: 103.8590, severity: 'Medium', baseRadius: 200 }, // Bayfront Ave
-  { id: 'hz3', type: 'flooding', lat: 1.3120, lng: 103.8760, severity: 'Medium', baseRadius: 130 }, // Geylang Rd
-  { id: 'hz4', type: 'obstacle', lat: 1.2789, lng: 103.8485, severity: 'High', baseRadius: 150 }, // Cross St
-];
+// Heatmap zones are computed dynamically within the component from active reports
 
 export function LiveHeatmap() {
   // Layer states
@@ -210,33 +206,55 @@ export function LiveHeatmap() {
   const [timelineVal, setTimelineVal] = useState(65);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Incident list state
-  const [incidents, setIncidents] = useState([
-    {
-      id: 'inc-1',
-      type: 'flooding',
-      title: 'Severe Waterlogging',
-      location: 'Sector 4, Orchard Rd',
-      time: 'Just now',
-      severity: 'High'
-    },
-    {
-      id: 'inc-2',
-      type: 'pothole',
-      title: 'Active Pothole',
-      location: 'Bayfront Ave North',
-      time: '5m ago',
-      severity: 'Medium'
-    },
-    {
-      id: 'inc-3',
-      type: 'obstacle',
-      title: 'Narrow Lane Risk',
-      location: 'Cross St Junction',
-      time: '12m ago',
-      severity: 'Medium'
-    }
-  ]);
+  // Shared storage state
+  const [reports, setReports] = useState<Report[]>(() => getReports());
+
+  useEffect(() => {
+    const handleSync = () => {
+      setReports(getReports());
+    };
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
+
+  const formatTimeAgo = (date: Date) => {
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString();
+  };
+
+  const mappedMarkers = reports
+    .filter(r => !r.resolved)
+    .map(r => {
+      let type: 'pothole' | 'flooding' | 'obstacle' = 'pothole';
+      if (r.icon === 'droplets') type = 'flooding';
+      else if (r.icon === 'hardhat') type = 'obstacle';
+
+      let severity: 'High' | 'Medium' | 'Low' = 'Low';
+      if (r.severity === 'Critical') severity = 'High';
+      else if (r.severity === 'Active') severity = 'Medium';
+
+      const timeStr = r.timestamp ? formatTimeAgo(new Date(r.timestamp)) : 'Just now';
+
+      return {
+        id: r.id,
+        type,
+        title: r.title,
+        location: r.location,
+        severity,
+        detectedTime: timeStr,
+        lat: r.lat || 1.3048,
+        lng: r.lng || 103.8318,
+        details: r.description || `Active ${r.title} at ${r.location}.`
+      };
+    });
+
   const [newIncidentFlash, setNewIncidentFlash] = useState(false);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
 
@@ -432,30 +450,36 @@ export function LiveHeatmap() {
     const feedInterval = setInterval(() => {
       const randomIdx = Math.floor(Math.random() * incidentTemplates.length);
       const template = incidentTemplates[randomIdx];
-      const newInc = {
-        id: `inc-${Date.now()}`,
-        type: template.type,
+      
+      let icon: 'alert' | 'droplets' | 'hardhat' = 'alert';
+      if (template.type === 'flooding') icon = 'droplets';
+      else if (template.type === 'obstacle') icon = 'hardhat';
+
+      let severity: 'Critical' | 'Active' | 'Pending' = 'Active';
+      if (template.severity === 'High') severity = 'Critical';
+      else if (template.severity === 'Medium') severity = 'Active';
+      else severity = 'Pending';
+
+      const lat = 1.27 + Math.random() * 0.05;
+      const lng = 103.82 + Math.random() * 0.06;
+
+      storageAddReport({
         title: template.title,
         location: template.location,
-        time: 'Just now',
-        severity: template.severity
-      };
-
-      setIncidents((prev) => {
-        const agedIncidents = prev.map((inc) => {
-          if (inc.time === 'Just now') return { ...inc, time: '1m ago' };
-          if (inc.time.endsWith('m ago')) {
-            const mins = parseInt(inc.time) + 1;
-            return { ...inc, time: `${mins}m ago` };
-          }
-          return inc;
-        });
-        return [newInc, ...agedIncidents].slice(0, 5);
+        severity,
+        icon,
+        source: 'AI Edge Node',
+        x: Math.floor(Math.random() * 60) + 20,
+        y: Math.floor(Math.random() * 60) + 20,
+        lat,
+        lng,
+        imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
+        description: `Autonomous detection alert: ${template.title} at ${template.location}.`
       });
 
       setNewIncidentFlash(true);
       setTimeout(() => setNewIncidentFlash(false), 800);
-    }, 12000);
+    }, 15000); // 15 seconds
 
     return () => clearInterval(feedInterval);
   }, []);
@@ -475,18 +499,27 @@ export function LiveHeatmap() {
   };
 
   // Filter markers based on layers and timeline hourly constraints
-  const filteredMarkers = initialMarkers.filter((m) => {
+  const filteredMarkers = mappedMarkers.filter((m) => {
     if (m.type === 'pothole' && !activeLayers.potholes) return false;
     if (m.type === 'flooding' && !activeLayers.flooding) return false;
     if (m.type === 'obstacle' && !activeLayers.obstacles) return false;
 
     // Timeline time-lapse simulation constraints
-    if (m.id === 'm1' && timelineVal < 15) return false; // Orchard Pothole
-    if (m.id === 'm2' && timelineVal < 35) return false; // Bayfront Flooding
-    if (m.id === 'm5' && timelineVal < 50) return false; // Geylang flood risk
+    if (m.id === 'rep-1' && timelineVal < 15) return false; // Orchard Pothole
+    if (m.id === 'rep-2' && timelineVal < 35) return false; // Bayfront Flooding
+    if (m.id === 'rep-5' && timelineVal < 50) return false; // Geylang flood risk
     
     return true;
   });
+
+  const heatmapZones: HeatmapZone[] = filteredMarkers.map(m => ({
+    id: `hz-${m.id}`,
+    type: m.type,
+    lat: m.lat,
+    lng: m.lng,
+    severity: m.severity === 'High' ? 'High' : 'Medium',
+    baseRadius: m.severity === 'High' ? 160 : 120
+  }));
 
   // Custom Heatmap implementation is handled reactively using GoogleMapPortalOverlay inside the JSX
 
@@ -918,9 +951,16 @@ export function LiveHeatmap() {
                       <Clock className="w-3 h-3" />
                       {marker.detectedTime}
                     </span>
-                    <span className="text-primary font-semibold flex items-center hover:underline cursor-pointer">
-                      Action Center <ChevronRight className="w-3 h-3" />
-                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        storageResolveReport(marker.id);
+                        setSelectedMarkerId(null);
+                      }}
+                      className="text-white bg-green-600 hover:bg-green-700 font-bold px-2.5 py-1 rounded-lg text-[10px] flex items-center gap-1 active:scale-95 transition-all cursor-pointer shadow-sm"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1259,7 +1299,7 @@ export function LiveHeatmap() {
 
               <div className="p-4 space-y-3.5 max-h-56 overflow-y-auto custom-scrollbar">
                 <AnimatePresence initial={false}>
-                  {incidents.map((inc) => (
+                  {filteredMarkers.slice(0, 5).map((inc) => (
                     <motion.div 
                       key={inc.id}
                       initial={{ opacity: 0, y: -12, scale: 0.95 }}
@@ -1277,7 +1317,7 @@ export function LiveHeatmap() {
                       <div className="flex-grow">
                         <div className="flex justify-between items-baseline">
                           <p className="text-xs font-bold text-primary leading-snug">{inc.title}</p>
-                          <span className="text-[9px] text-text-secondary whitespace-nowrap">{inc.time}</span>
+                          <span className="text-[9px] text-text-secondary whitespace-nowrap">{inc.detectedTime}</span>
                         </div>
                         <p className="text-[10px] text-text-secondary uppercase tracking-wider mt-0.5">
                           {inc.location}
