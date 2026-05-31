@@ -826,7 +826,7 @@ export function Landing() {
               <div className="bg-white border border-slate-200 p-4 rounded-lg flex items-center gap-3 hover:-translate-y-1 hover:shadow-md transition-all duration-300">
                 <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-bold text-sm shrink-0">P</div>
                 <div>
-                  <p className="font-semibold text-sm text-slate-900">Prince</p>
+                  <p className="font-semibold text-sm text-slate-900">Prince (Team Lead.)</p>
                   <p className="text-[10px] text-slate-500">Core Developer</p>
                 </div>
               </div>
