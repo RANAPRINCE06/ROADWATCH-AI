@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Bell, Bot, MapPin, Menu, Play, AlertTriangle, X } from 'lucide-react';
+import { Search, Bell, Bot, MapPin, Menu, Play, AlertTriangle, X, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getReports, Report } from '../utils/storage';
 
@@ -8,6 +8,20 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
   const [searchQuery, setSearchQuery] = useState('');
   const [criticalReports, setCriticalReports] = useState<Report[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+
+  const userStr = localStorage.getItem('roadwatch_user');
+  const user = userStr ? JSON.parse(userStr) : null;
+  const email = user?.email || 'admin@roadwatch.gov';
+  const role = user?.role || 'authority';
+
+  const displayName = role === 'citizen' ? 'Citizen User' : role === 'maintenance' ? 'Maintenance Crew Lead' : 'Marcus Thorne';
+  const roleTitle = role === 'citizen' ? 'Citizen Reporter' : role === 'maintenance' ? 'Operations Dispatch' : 'Chief Safety Officer';
+
+  const handleSignOut = () => {
+    localStorage.removeItem('roadwatch_user');
+    navigate('/login');
+  };
 
   useEffect(() => {
     const updateAlerts = () => {
@@ -184,16 +198,36 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
         
         <div className="h-8 w-px bg-outline-variant"></div>
         
-        <div className="flex items-center gap-3 cursor-pointer group">
-          <div className="text-right">
-            <p className="text-body-sm font-bold leading-tight group-hover:text-primary transition-colors">Marcus Thorne</p>
-            <p className="text-[11px] text-on-surface-variant opacity-70">Chief Safety Officer</p>
-          </div>
-          <img 
-            alt="User profile" 
-            className="w-10 h-10 rounded-full border border-border-subtle object-cover" 
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuCs1aCxQRSRbOaSzSN0IuWNbUJMmA7-n88Bk5LD4_K6qzpBufNOp4ON04PdaGd-6-uBjiKVCdr2mPAwmYYdV6QXSFIfY9KgQ26ieTh2PaUU8Pq_Pi0uJHs009XW8NUmUcs8A4YU9g8fcs64ACg6MdPUHf8zW3q_OC2LVklLfTeLw_jsslfuu1m2RmnaMjt8csa0tP2wz3yqfGriYWlrRAeUY4NOAVadZ0MhgJPuHurxSxVRqqJ_ENSQdjRfgP8zLYtLy7cRvNbG-l0" 
-          />
+        <div className="relative">
+          <button 
+            onClick={() => setShowProfileMenu(!showProfileMenu)}
+            className="flex items-center gap-3 cursor-pointer group hover:opacity-90 focus:outline-none"
+          >
+            <div className="text-right hidden md:block">
+              <p className="text-body-sm font-bold leading-tight group-hover:text-primary transition-colors">{displayName}</p>
+              <p className="text-[10px] text-on-surface-variant font-semibold uppercase tracking-wider">{roleTitle}</p>
+            </div>
+            <img 
+              alt="User profile" 
+              className="w-10 h-10 rounded-full border border-border-subtle object-cover shadow-sm group-hover:border-primary transition-all" 
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuCs1aCxQRSRbOaSzSN0IuWNbUJMmA7-n88Bk5LD4_K6qzpBufNOp4ON04PdaGd-6-uBjiKVCdr2mPAwmYYdV6QXSFIfY9KgQ26ieTh2PaUU8Pq_Pi0uJHs009XW8NUmUcs8A4YU9g8fcs64ACg6MdPUHf8zW3q_OC2LVklLfTeLw_jsslfuu1m2RmnaMjt8csa0tP2wz3yqfGriYWlrRAeUY4NOAVadZ0MhgJPuHurxSxVRqqJ_ENSQdjRfgP8zLYtLy7cRvNbG-l0" 
+            />
+          </button>
+
+          {showProfileMenu && (
+            <div className="absolute right-0 mt-2.5 w-56 bg-white rounded-xl shadow-xl border border-border-subtle z-50 p-3 animate-fade-in-up">
+              <div className="px-2 py-1.5 border-b border-border-subtle/50 mb-1.5">
+                <p className="text-xs font-black text-primary truncate leading-tight">{displayName}</p>
+                <p className="text-[9px] text-text-secondary truncate mt-0.5">{email}</p>
+              </div>
+              <button 
+                onClick={handleSignOut}
+                className="w-full flex items-center gap-2 px-2 py-2 hover:bg-red-50 text-red-600 rounded-lg text-xs font-bold transition-all text-left cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" /> Sign Out
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

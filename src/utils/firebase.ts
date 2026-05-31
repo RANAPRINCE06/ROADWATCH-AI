@@ -22,14 +22,16 @@ import {
   getDownloadURL 
 } from 'firebase/storage';
 
+const cleanEnv = (val: any) => typeof val === 'string' ? val.replace(/^["']|["']$/g, '').trim() : val;
+
 // Check if Firebase environment variables are configured
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: cleanEnv(import.meta.env.VITE_FIREBASE_API_KEY),
+  authDomain: cleanEnv(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+  projectId: cleanEnv(import.meta.env.VITE_FIREBASE_PROJECT_ID),
+  storageBucket: cleanEnv(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
+  messagingSenderId: cleanEnv(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
+  appId: cleanEnv(import.meta.env.VITE_FIREBASE_APP_ID)
 };
 
 const isConfigured = 
@@ -50,6 +52,7 @@ if (isConfigured) {
     console.log('Firebase initialized successfully.');
   } catch (err) {
     console.error('Firebase failed to initialize, falling back to mock services:', err);
+    realFirebaseActive = false;
   }
 }
 

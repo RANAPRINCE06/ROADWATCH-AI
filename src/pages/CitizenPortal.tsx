@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   UploadCloud, 
   CheckCircle2, 
@@ -45,6 +46,8 @@ const LOCALIZATION = {
   en: {
     title: 'Citizen Road Safety Portal',
     subtitle: 'Report street damage, track resolving dispatches, and verify paving quality.',
+    adminTitle: 'Municipal Operations Admin Portal',
+    adminSubtitle: 'Monitor active road dispatches, coordinate work crews, and verify resolution metrics.',
     formHeader: 'Submit New Complaint',
     complaintTitle: 'Complaint Title',
     description: 'Detailed Description',
@@ -59,6 +62,8 @@ const LOCALIZATION = {
   zh: {
     title: '市民路况监督门户',
     subtitle: '直接向市政工程部门报告街道损坏。',
+    adminTitle: '市政运营管理门户',
+    adminSubtitle: '监控活动调度，协调工作团队，并验证解决方案指标。',
     formHeader: '提交新投诉',
     complaintTitle: '投诉投诉',
     description: '详细说明',
@@ -73,6 +78,8 @@ const LOCALIZATION = {
   ms: {
     title: 'Portal Aduan Jalan Raya',
     subtitle: 'Laporkan kerosakan jalan terus kepada bahagian kejuruteraan perbandaran.',
+    adminTitle: 'Portal Admin Operasi Perbandaran',
+    adminSubtitle: 'Pantau dispatch aktif, selaraskan kru kerja, dan sahkan metrik penyelesaian.',
     formHeader: 'Hantar Aduan Baru',
     complaintTitle: 'Tajuk Aduan',
     description: 'Butiran Terperinci',
@@ -87,6 +94,8 @@ const LOCALIZATION = {
   ta: {
     title: 'குடிமக்கள் சாலை கண்காணிப்பு போர்டல்',
     subtitle: 'தெரு சேதங்களை நேரடியாக நகராட்சி பொறியியல் பிரிவுகளுக்கு புகாரளிக்கவும்.',
+    adminTitle: 'நகராட்சி செயல்பாடுகள் நிர்வாக போர்டல்',
+    adminSubtitle: 'செயலில் உள்ள அனுப்புதல்களைக் கண்காணிக்கவும், குழுக்களை ஒருங்கிணைக்கவும்.',
     formHeader: 'புதிய புகாரை சமர்ப்பிக்கவும்',
     complaintTitle: 'புகார் தலைப்பு',
     description: 'விரிவான விளக்கம்',
@@ -169,8 +178,19 @@ export function CitizenPortal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  const [searchParams, setSearchParams] = useSearchParams();
+
   // User role state
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isAdmin, setIsAdmin] = useState<boolean>(searchParams.get('admin') === 'true');
+
+  useEffect(() => {
+    setIsAdmin(searchParams.get('admin') === 'true');
+  }, [searchParams]);
+
+  const toggleRole = (admin: boolean) => {
+    setIsAdmin(admin);
+    setSearchParams({ admin: admin ? 'true' : 'false' });
+  };
 
   // Feedback/Verification fields
   const [citizenRating, setCitizenRating] = useState<number>(5);
@@ -569,33 +589,15 @@ export function CitizenPortal() {
       {/* Header Banner with Language Select, Role Select & Notifications */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 border-b border-border-subtle/50 pb-6">
         <div>
-          <h2 className="text-3xl font-bold text-primary tracking-tight">{t.title}</h2>
-          <p className="text-text-secondary mt-1">{t.subtitle}</p>
+          <h2 className="text-3xl font-bold text-primary tracking-tight">
+            {isAdmin ? t.adminTitle : t.title}
+          </h2>
+          <p className="text-text-secondary mt-1">
+            {isAdmin ? t.adminSubtitle : t.subtitle}
+          </p>
         </div>
         
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Role Switcher Toggle */}
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-border-subtle shadow-inner h-10 select-none">
-            <button
-              type="button"
-              onClick={() => setIsAdmin(false)}
-              className={`px-4.5 py-1 rounded-md text-xs font-bold transition-all ${
-                !isAdmin ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-primary'
-              }`}
-            >
-              Citizen View
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsAdmin(true)}
-              className={`px-4.5 py-1 rounded-md text-xs font-bold transition-all ${
-                isAdmin ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-primary'
-              }`}
-            >
-              Municipal Operations (Admin)
-            </button>
-          </div>
-
           {/* Notifications Bell Dropdown */}
           <div className="relative">
             <button

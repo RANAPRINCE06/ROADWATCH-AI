@@ -24,6 +24,7 @@ const coreLinks = [
   { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { name: 'Live Heatmap', icon: Map, path: '/heatmap' },
   { name: 'Emergency Alerts', icon: Bell, path: '/alerts' },
+  { name: 'Municipal Operations (Admin)', icon: ShieldCheck, path: '/citizen?admin=true' },
 ];
 
 const intelligenceLinks = [
@@ -41,7 +42,9 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
   const location = useLocation();
 
   const renderLink = (link: { name: string; icon: any; path: string }) => {
-    const isActive = location.pathname === link.path;
+    const isActive = link.path.includes('?')
+      ? (location.pathname + location.search) === link.path
+      : location.pathname === link.path && !location.search.includes('admin=true');
     return (
       <Link
         key={link.name}
