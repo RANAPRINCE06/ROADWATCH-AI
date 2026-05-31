@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getAuth, 
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   signInWithEmailAndPassword 
 } from 'firebase/auth';
@@ -77,7 +79,32 @@ export function Login() {
     }
   };
 
+  // On mount: catch Google redirect result (used when popup is blocked → fallback to redirect)
+  useEffect(() => {
+    if (!realFirebaseActive) return;
+    const auth = getAuth();
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!result) return;
+        const user = result.user;
+        const savedRole = (localStorage.getItem('roadwatch_pending_google_role') as typeof role) || 'authority';
+        localStorage.removeItem('roadwatch_pending_google_role');
+        try {
+          const userDocRef = getDocRef('users', user.uid);
+          await setDocument(userDocRef, { email: user.email, role: savedRole });
+        } catch (e) { /* non-blocking */ }
+        const sessionUser = { email: user.email, uid: user.uid, role: savedRole, provider: 'google' };
+        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
+        showToast('Google Sign-In successful! Redirecting...', 'success');
+        setTimeout(() => routeUser(savedRole), 1200);
+      })
+      .catch((err) => {
+        if (err?.code !== 'auth/no-auth-event') console.warn('Redirect result error:', err);
+      });
+  }, []);
+
   // Handle Google Login
+  // Strategy: try popup first (instant UX). If COOP/browser blocks it, fall back to redirect.
   const handleGoogleLogin = async () => {
     setIsAuthenticating(true);
     setToast(null);
@@ -86,8 +113,19 @@ export function Login() {
       const auth = getAuth();
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
+
+      // Safety timeout — if popup hangs >20s, reset state and suggest fallback
+      const safetyTimer = setTimeout(() => {
+        setIsAuthenticating(false);
+        showToast('Google Sign-In timed out. Redirecting to Google instead...', 'info');
+        // Auto-fall back to redirect after timeout
+        localStorage.setItem('roadwatch_pending_google_role', role);
+        signInWithRedirect(auth, provider);
+      }, 20000);
+
       try {
         const result = await signInWithPopup(auth, provider);
+        clearTimeout(safetyTimer);
         const user = result.user;
 
         // Store user role in Firestore
@@ -103,6 +141,15 @@ export function Login() {
         showToast('Login successful! Redirecting to Command Center...', 'success');
         setTimeout(() => routeUser(role), 1200);
       } catch (err: any) {
+        clearTimeout(safetyTimer);
+        const code = err?.code || '';
+        // If popup was blocked by browser or COOP policy → silently switch to redirect
+        if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request') {
+          showToast('Popup blocked — redirecting to Google Sign-In...', 'info');
+          localStorage.setItem('roadwatch_pending_google_role', role);
+          await signInWithRedirect(auth, provider);
+          return; // Browser navigates away
+        }
         handleFirebaseError(err);
         setIsAuthenticating(false);
       }
