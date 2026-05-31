@@ -1,4 +1,5 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
+import { getAnalytics, isSupported as analyticsIsSupported } from 'firebase/analytics';
 import { 
   getFirestore, 
   collection, 
@@ -31,7 +32,8 @@ const firebaseConfig = {
   projectId: cleanEnv(import.meta.env.VITE_FIREBASE_PROJECT_ID),
   storageBucket: cleanEnv(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
   messagingSenderId: cleanEnv(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
-  appId: cleanEnv(import.meta.env.VITE_FIREBASE_APP_ID)
+  appId: cleanEnv(import.meta.env.VITE_FIREBASE_APP_ID),
+  measurementId: cleanEnv(import.meta.env.VITE_FIREBASE_MEASUREMENT_ID)
 };
 
 const isConfigured = 
@@ -41,6 +43,7 @@ const isConfigured =
 
 let db: any;
 let storage: any;
+let analytics: any = null;
 let realFirebaseActive = false;
 
 if (isConfigured) {
@@ -50,6 +53,13 @@ if (isConfigured) {
     storage = getStorage(app);
     realFirebaseActive = true;
     console.log('Firebase initialized successfully.');
+    // Initialize Analytics only where supported (not in SSR/Node environments)
+    analyticsIsSupported().then(supported => {
+      if (supported) {
+        analytics = getAnalytics(app);
+        console.log('Firebase Analytics initialized.');
+      }
+    }).catch(() => {});
   } catch (err) {
     console.error('Firebase failed to initialize, falling back to mock services:', err);
     realFirebaseActive = false;
@@ -182,7 +192,8 @@ if (!realFirebaseActive) {
   };
 }
 
-export { db, storage, realFirebaseActive };
+export { db, storage, analytics, realFirebaseActive };
+
 
 // Firestore API wrappers that support both real Firebase and fallback local mock
 export function getCollectionRef(path: string) {
