@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getAuth, 
-  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider, 
   signInWithEmailAndPassword 
 } from 'firebase/auth';
+
 import { realFirebaseActive, db, setDocument, getDocRef } from '../utils/firebase';
 import { 
   Mail, 
@@ -79,82 +79,41 @@ export function Login() {
     }
   };
 
-  // On mount: catch Google redirect result (used when popup is blocked → fallback to redirect)
+  // On mount: handle Google redirect result after returning from accounts.google.com
   useEffect(() => {
     if (!realFirebaseActive) return;
     const auth = getAuth();
     getRedirectResult(auth)
       .then(async (result) => {
-        if (!result) return;
+        if (!result) return; // No pending redirect — normal page load
         const user = result.user;
+        // Restore role that was saved before the redirect
         const savedRole = (localStorage.getItem('roadwatch_pending_google_role') as typeof role) || 'authority';
         localStorage.removeItem('roadwatch_pending_google_role');
+        // Save role to Firestore (non-blocking)
         try {
           const userDocRef = getDocRef('users', user.uid);
           await setDocument(userDocRef, { email: user.email, role: savedRole });
-        } catch (e) { /* non-blocking */ }
+        } catch (_) {}
+        // Persist session
         const sessionUser = { email: user.email, uid: user.uid, role: savedRole, provider: 'google' };
         localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
         showToast('Google Sign-In successful! Redirecting...', 'success');
         setTimeout(() => routeUser(savedRole), 1200);
       })
       .catch((err) => {
-        if (err?.code !== 'auth/no-auth-event') console.warn('Redirect result error:', err);
+        // auth/no-auth-event fires on every normal page load — ignore it
+        if (err?.code && err.code !== 'auth/no-auth-event') {
+          showToast('Google Sign-In failed: ' + (err.message || err.code), 'error');
+        }
       });
   }, []);
 
-  // Handle Google Login
-  // Strategy: try popup first (instant UX). If COOP/browser blocks it, fall back to redirect.
-  const handleGoogleLogin = async () => {
-    setIsAuthenticating(true);
-    setToast(null);
-
-    if (realFirebaseActive) {
-      const auth = getAuth();
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-
-      // Safety timeout — if popup hangs >20s, reset state and suggest fallback
-      const safetyTimer = setTimeout(() => {
-        setIsAuthenticating(false);
-        showToast('Google Sign-In timed out. Redirecting to Google instead...', 'info');
-        // Auto-fall back to redirect after timeout
-        localStorage.setItem('roadwatch_pending_google_role', role);
-        signInWithRedirect(auth, provider);
-      }, 20000);
-
-      try {
-        const result = await signInWithPopup(auth, provider);
-        clearTimeout(safetyTimer);
-        const user = result.user;
-
-        // Store user role in Firestore
-        try {
-          const userDocRef = getDocRef('users', user.uid);
-          await setDocument(userDocRef, { email: user.email, role: role });
-        } catch (firestoreErr) {
-          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
-        }
-
-        const sessionUser = { email: user.email, uid: user.uid, role: role, provider: 'google' };
-        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
-        showToast('Login successful! Redirecting to Command Center...', 'success');
-        setTimeout(() => routeUser(role), 1200);
-      } catch (err: any) {
-        clearTimeout(safetyTimer);
-        const code = err?.code || '';
-        // If popup was blocked by browser or COOP policy → silently switch to redirect
-        if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request') {
-          showToast('Popup blocked — redirecting to Google Sign-In...', 'info');
-          localStorage.setItem('roadwatch_pending_google_role', role);
-          await signInWithRedirect(auth, provider);
-          return; // Browser navigates away
-        }
-        handleFirebaseError(err);
-        setIsAuthenticating(false);
-      }
-    } else {
-      // Simulate Google Sign-In in mock mode
+  // Handle Google Login — uses redirect flow (no popup) to avoid COOP browser warnings
+  const handleGoogleLogin = () => {
+    if (!realFirebaseActive) {
+      // Mock mode simulation
+      setIsAuthenticating(true);
       setTimeout(() => {
         const sessionUser = {
           email: 'google.demo@roadwatch.gov',
@@ -166,7 +125,22 @@ export function Login() {
         showToast('Demo Google Login successful! Redirecting...', 'success');
         setTimeout(() => routeUser(role), 1200);
       }, 1500);
+      return;
     }
+
+    // Save role before redirect so we can restore it when Google returns us here
+    localStorage.setItem('roadwatch_pending_google_role', role);
+    setIsAuthenticating(true);
+
+    const auth = getAuth();
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    // signInWithRedirect: browser navigates to Google, then back — no popup, no COOP issue
+    signInWithRedirect(auth, provider).catch((err: any) => {
+      localStorage.removeItem('roadwatch_pending_google_role');
+      handleFirebaseError(err);
+      setIsAuthenticating(false);
+    });
   };
 
   // Handle Email/Password Login
