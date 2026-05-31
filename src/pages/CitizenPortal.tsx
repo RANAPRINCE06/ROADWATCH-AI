@@ -25,7 +25,6 @@ import {
   getComplaints, 
   addComplaint, 
   upvoteComplaint, 
-  verifyComplaint, 
   updateComplaintStatus,
   CitizenComplaint 
 } from '../utils/storage';
@@ -166,6 +165,65 @@ const getTimeSince = (dateStr: string) => {
   return `${diffDays} days ago`;
 };
 
+// SLA deadline based on priority
+function getSlaMs(priority?: string): number {
+  switch (priority) {
+    case 'Critical': return 24 * 60 * 60 * 1000;       // 24 h
+    case 'High':     return 3 * 24 * 60 * 60 * 1000;   // 3 days
+    case 'Medium':   return 7 * 24 * 60 * 60 * 1000;   // 7 days
+    default:         return 14 * 24 * 60 * 60 * 1000;  // 14 days
+  }
+}
+
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return 'BREACHED';
+  const totalSecs = Math.floor(ms / 1000);
+  const d = Math.floor(totalSecs / 86400);
+  const h = Math.floor((totalSecs % 86400) / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+
+const STATUS_PROGRESS: Record<string, number> = {
+  Submitted: 10, Verified: 28, Assigned: 46, Repairing: 64,
+  'Repair In Progress': 64, Resolved: 82, Closed: 100
+};
+
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
+const ALLOWED_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MIN_IMAGE_DIMENSION = 100;
+
+function getImageExtension(file: File): string {
+  const dotIndex = file.name.lastIndexOf('.');
+  return dotIndex >= 0 ? file.name.slice(dotIndex).toLowerCase() : '';
+}
+
+function validateImageFile(file: File): string | null {
+  const extension = getImageExtension(file);
+  const hasAllowedType = file.type ? ALLOWED_IMAGE_TYPES.has(file.type) : false;
+  const hasAllowedExtension = ALLOWED_IMAGE_EXTENSIONS.has(extension);
+
+  if (!hasAllowedType && !hasAllowedExtension) {
+    return 'Unsupported format. Please upload PNG, JPG, JPEG, or WEBP.';
+  }
+
+  if (file.size > MAX_IMAGE_BYTES) {
+    return `File is ${(file.size / (1024 * 1024)).toFixed(1)} MB - exceeds the 10 MB limit. Please compress and retry.`;
+  }
+
+  return null;
+}
+
+function buildUploadPath(folder: string, file: File): string {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `${folder}/${Date.now()}_${safeName}`;
+}
+
+
 export function CitizenPortal() {
   const [lang, setLang] = useState<'en' | 'zh' | 'ms' | 'ta'>('en');
   const [complaints, setComplaints] = useState<CitizenComplaint[]>([]);
@@ -176,6 +234,7 @@ export function CitizenPortal() {
   
   const [selectedCompId, setSelectedCompId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -246,6 +305,20 @@ export function CitizenPortal() {
     return () => unsubscribe();
   }, []);
 
+  // Listen to search-driven complaint selection updates
+  useEffect(() => {
+    const handleSelectComplaint = (e: Event) => {
+      const compId = (e as CustomEvent).detail;
+      if (compId) {
+        setSelectedCompId(compId);
+      }
+    };
+    window.addEventListener('roadwatch-select-complaint', handleSelectComplaint);
+    return () => {
+      window.removeEventListener('roadwatch-select-complaint', handleSelectComplaint);
+    };
+  }, []);
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const markAllAsRead = () => {
@@ -256,81 +329,122 @@ export function CitizenPortal() {
     });
   };
 
-  // Main Image Upload Handler
+  // ── Enhanced image upload validation ──────────────────────────────────────
   const handleFile = (file: File | undefined) => {
     if (!file) return;
-    
-    // Type validation
-    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) {
-      setUploadError("Unsupported format. Please upload PNG, JPG, or JPEG.");
+
+    setUploadedImageUrl('');
+
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setUploadError(validationError);
       return;
     }
-    
+
+    // Type validation
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    if (file.type && !allowed.includes(file.type)) {
+      setUploadError(`Unsupported format "${file.type || 'unknown'}". Please upload PNG, JPG, JPEG, or WEBP.`);
+      return;
+    }
+
     // Size validation (10 MB)
     if (file.size > 10 * 1024 * 1024) {
-      setUploadError("File size exceeds the 10MB limit.");
+      setUploadError(`File is ${(file.size / (1024 * 1024)).toFixed(1)} MB — exceeds the 10 MB limit. Please compress and retry.`);
       return;
     }
-    
+
     setUploadError(null);
     setUploadingFile(file);
     setUploadProgress(0);
 
-    const path = `complaints/${Date.now()}_${file.name}`;
-    uploadFile(path, file, (progress) => {
-      setUploadProgress(progress);
-    })
-    .then((url) => {
-      setUploadedImageUrl(url);
-      setUploadingFile(null);
-    })
-    .catch((err) => {
-      console.error(err);
-      setUploadError("Failed to upload image. Please try again.");
-      setUploadingFile(null);
-    });
+    // Dimension check before upload
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        if (img.naturalWidth < MIN_IMAGE_DIMENSION || img.naturalHeight < MIN_IMAGE_DIMENSION) {
+          setUploadError(`Image resolution ${img.naturalWidth}×${img.naturalHeight}px is too low. Minimum 100×100px required.`);
+          setUploadingFile(null);
+          return;
+        }
+        const path = buildUploadPath('complaints', file);
+        uploadFile(path, file, (progress) => { setUploadProgress(progress); })
+          .then((url) => { setUploadedImageUrl(url); setUploadingFile(null); })
+          .catch((err) => {
+            console.error(err);
+            setUploadError('Failed to upload image. Please try again.');
+            setUploadingFile(null);
+          });
+      };
+      img.onerror = () => {
+        setUploadError('Failed to read image. The file may be corrupted.');
+        setUploadingFile(null);
+      };
+      img.src = ev.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
-  // Follow-Up Image Upload Handler
+  // ── Enhanced follow-up image upload validation ─────────────────────────────
   const handleFollowUpFile = (file: File | undefined) => {
     if (!file) return;
-    
-    // Type validation
-    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) {
-      setFollowUpError("Unsupported format. Please upload PNG, JPG, or JPEG.");
+
+    setFollowUpImageUrl('');
+
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setFollowUpError(validationError);
       return;
     }
-    
+
+    // Type validation
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    if (file.type && !allowed.includes(file.type)) {
+      setFollowUpError(`Unsupported format. Please upload PNG, JPG, JPEG, or WEBP.`);
+      return;
+    }
+
     // Size validation (10 MB)
     if (file.size > 10 * 1024 * 1024) {
-      setFollowUpError("File size exceeds the 10MB limit.");
+      setFollowUpError(`File is ${(file.size / (1024 * 1024)).toFixed(1)} MB — exceeds the 10 MB limit.`);
       return;
     }
-    
+
     setFollowUpError(null);
     setFollowUpFile(file);
     setFollowUpProgress(0);
 
-    const path = `followups/${Date.now()}_${file.name}`;
-    uploadFile(path, file, (progress) => {
-      setFollowUpProgress(progress);
-    })
-    .then((url) => {
-      setFollowUpImageUrl(url);
-      setFollowUpFile(null);
-    })
-    .catch((err) => {
-      console.error(err);
-      setFollowUpError("Failed to upload image. Please try again.");
-      setFollowUpFile(null);
-    });
+    const path = buildUploadPath('followups', file);
+    uploadFile(path, file, (progress) => { setFollowUpProgress(progress); })
+      .then((url) => { setFollowUpImageUrl(url); setFollowUpFile(null); })
+      .catch((err) => {
+        console.error(err);
+        setFollowUpError('Failed to upload image. Please try again.');
+        setFollowUpFile(null);
+      });
   };
+
+  // ── SLA countdown timer ────────────────────────────────────────────────────
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
 
   const t = LOCALIZATION[lang];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !locName.trim()) return;
+    const trimmedTitle = title.trim();
+    const trimmedDescription = desc.trim();
+    const trimmedLocation = locName.trim();
+
+    if (!trimmedTitle || !trimmedLocation) {
+      setUploadError('Please provide a complaint title and location before filing.');
+      return;
+    }
 
     if (!uploadedImageUrl) {
       setUploadError("Please upload an image of the road damage.");
@@ -338,14 +452,16 @@ export function CitizenPortal() {
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      const priority = calculatePriority(title, desc);
-      const hazardType = determineHazardType(title, desc);
+    setUploadError(null);
 
-      addComplaint({
-        title,
-        description: desc,
-        locationName: locName,
+    try {
+      const priority = calculatePriority(trimmedTitle, trimmedDescription);
+      const hazardType = determineHazardType(trimmedTitle, trimmedDescription);
+
+      const newComplaint = await addComplaint({
+        title: trimmedTitle,
+        description: trimmedDescription,
+        locationName: trimmedLocation,
         imageUrl: uploadedImageUrl,
         lat: 1.2900 + (Math.random() - 0.5) * 0.03,
         lng: 103.8500 + (Math.random() - 0.5) * 0.03,
@@ -354,17 +470,22 @@ export function CitizenPortal() {
         citizenId: 'citizen_demo',
         priority,
         hazardType
-      } as any);
+      });
       
       setTitle('');
       setDesc('');
       setLocName('');
       setUploadedImageUrl('');
-      setIsSubmitting(false);
+      setSelectedCompId(newComplaint.id);
 
       setSuccessMsg('Complaint registered successfully in the municipal ledger!');
       setTimeout(() => setSuccessMsg(null), 4000);
-    }, 1200);
+    } catch (err) {
+      console.error('Failed to submit complaint:', err);
+      setUploadError('Unable to file this complaint right now. Please retry in a moment.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleVote = (id: string, e: React.MouseEvent) => {
@@ -372,50 +493,92 @@ export function CitizenPortal() {
     upvoteComplaint(id);
   };
 
-  const handleVerify = (id: string) => {
-    if (isConfirmed) {
-      verifyComplaint(id, citizenRating, citizenFeedback || 'Verified by citizen. Excellent smoothing work.');
-      // Sets status to Closed on confirm
-      updateDocument(getDocRef('complaints', id), { status: 'Closed', citizenVerified: true });
-      updateDocument(getDocRef('reports', `rep-from-${id}`), { resolved: true, status: 'Resolved' });
-      if (followUpImageUrl) {
-        updateDocument(getDocRef('complaints', id), { followUpImageUrl });
-        updateDocument(getDocRef('reports', `rep-from-${id}`), { afterImageUrl: followUpImageUrl });
+  const handleVerify = async (id: string) => {
+    if (!selectedComplaint || isVerifying) return;
+
+    setIsVerifying(true);
+    setUploadError(null);
+
+    try {
+      const feedback = citizenFeedback.trim() || (isConfirmed
+        ? 'Verified by citizen. Excellent smoothing work.'
+        : 'Repair rejected by citizen. Pavement is still uneven.');
+
+      if (isConfirmed) {
+        const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const verificationFields = {
+          status: 'Closed' as const,
+          resolvedAt: new Date().toISOString(),
+          citizenVerified: true,
+          citizenRejected: false,
+          citizenRating,
+          citizenFeedback: feedback,
+          satisfactionScore: citizenRating * 20,
+          resolutionQualityScore: Math.min(100, Math.round(85 + citizenRating * 3)),
+          ...(followUpImageUrl ? { followUpImageUrl } : {})
+        };
+
+        await Promise.all([
+          updateDocument(getDocRef('complaints', id), verificationFields),
+          updateDocument(getDocRef('reports', `rep-from-${id}`), {
+            resolved: true,
+            status: 'Resolved',
+            actualCompletionDate: todayStr,
+            repairDate: todayStr,
+            citizenVerified: true,
+            citizenRejected: false,
+            citizenRating,
+            citizenFeedback: feedback,
+            satisfactionScore: citizenRating * 20,
+            resolutionQualityScore: Math.min(100, Math.round(85 + citizenRating * 3)),
+            ...(followUpImageUrl ? { afterImageUrl: followUpImageUrl } : {})
+          }),
+          addDocument(getCollectionRef('notifications'), {
+            title: 'Repair Verified & Closed',
+            message: `You verified and closed the complaint for "${selectedComplaint.title}".`,
+            timestamp: new Date().toISOString(),
+            read: false,
+            citizenId: 'citizen_demo'
+          })
+        ]);
+
+        setSuccessMsg('Citizen verification submitted successfully! Paving certified & Closed.');
+      } else {
+        await Promise.all([
+          updateDocument(getDocRef('complaints', id), {
+            status: 'Repairing',
+            citizenVerified: false,
+            citizenRejected: true,
+            citizenFeedback: feedback
+          }),
+          updateDocument(getDocRef('reports', `rep-from-${id}`), {
+            status: 'Repairing',
+            resolved: false,
+            citizenVerified: false,
+            citizenRejected: true,
+            citizenFeedback: feedback
+          }),
+          addDocument(getCollectionRef('notifications'), {
+            title: 'Repair Rejected',
+            message: `You rejected the repair for "${selectedComplaint.title}". Status reverted to Repairing.`,
+            timestamp: new Date().toISOString(),
+            read: false,
+            citizenId: 'citizen_demo'
+          })
+        ]);
+
+        setSuccessMsg('Complaint reopened. Re-dispatch request sent to maintenance teams.');
       }
-      addDocument(getCollectionRef('notifications'), {
-        title: 'Repair Verified & Closed',
-        message: `You verified and closed the complaint for "${selectedComplaint.title}".`,
-        timestamp: new Date().toISOString(),
-        read: false,
-        citizenId: 'citizen_demo'
-      });
-      setSuccessMsg('Citizen verification submitted successfully! Paving certified & Closed.');
-    } else {
-      updateDocument(getDocRef('complaints', id), { 
-        status: 'Repairing',
-        citizenVerified: false,
-        citizenRejected: true,
-        citizenFeedback: citizenFeedback || 'Repair rejected by citizen. Pavement is still uneven.'
-      });
-      updateDocument(getDocRef('reports', `rep-from-${id}`), {
-        status: 'Repairing',
-        resolved: false,
-        citizenVerified: false,
-        citizenRejected: true,
-        citizenFeedback: citizenFeedback || 'Repair rejected by citizen. Pavement is still uneven.'
-      });
-      addDocument(getCollectionRef('notifications'), {
-        title: 'Repair Rejected',
-        message: `You rejected the repair for "${selectedComplaint.title}". Status reverted to Repairing.`,
-        timestamp: new Date().toISOString(),
-        read: false,
-        citizenId: 'citizen_demo'
-      });
-      setSuccessMsg('Complaint reopened. Re-dispatch request sent to maintenance teams.');
+
+      setCitizenFeedback('');
+      setFollowUpImageUrl('');
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (err) {
+      console.error('Failed to submit citizen verification:', err);
+      setUploadError('Unable to submit citizen verification right now. Please retry in a moment.');
+    } finally {
+      setIsVerifying(false);
     }
-    setCitizenFeedback('');
-    setFollowUpImageUrl('');
-    setTimeout(() => setSuccessMsg(null), 4000);
   };
 
   // Admin Actions
@@ -743,7 +906,7 @@ export function CitizenPortal() {
                   <input 
                     type="file"
                     ref={fileInputRef}
-                    accept=".png,.jpg,.jpeg"
+                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
                     onChange={(e) => handleFile(e.target.files?.[0])}
                     style={{ display: 'none' }}
                   />
@@ -779,7 +942,7 @@ export function CitizenPortal() {
                     <>
                       <UploadCloud className="w-8 h-8 text-text-secondary mb-2" />
                       <span className="text-xs font-bold text-primary">{t.upload}</span>
-                      <span className="text-[10px] text-text-secondary mt-1">PNG, JPG or JPEG up to 10MB</span>
+                      <span className="text-[10px] text-text-secondary mt-1">PNG, JPG, JPEG or WEBP up to 10MB</span>
                     </>
                   )}
                 </div>
@@ -912,11 +1075,23 @@ export function CitizenPortal() {
                             </button>
                           )}
 
+                          {comp.status === 'Resolved' && (
+                            <button
+                              type="button"
+                              onClick={() => handleAdminStatusChange(comp.id, 'Closed')}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
+                            >
+                              Close
+                            </button>
+                          )}
+
                           {(comp.status === 'Resolved' || comp.status === 'Closed') && (
                             <button
                               type="button"
                               onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
-                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
+                              className={`px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors border border-red-200 shadow-sm ${
+                                comp.status === 'Closed' ? 'ml-auto' : ''
+                              }`}
                             >
                               Reopen
                             </button>
@@ -990,6 +1165,99 @@ export function CitizenPortal() {
                 )}
               </div>
 
+              {/* Tracking Summary Card */}
+              {selectedComplaint && (() => {
+                const slaMs = getSlaMs(selectedComplaint.priority);
+                const filedMs = new Date(selectedComplaint.timestamp || selectedComplaint.createdAt).getTime();
+                const elapsed = nowMs - filedMs;
+                const remaining = slaMs - elapsed;
+                const pct = Math.min(100, Math.round((elapsed / slaMs) * 100));
+                const isBreached = remaining <= 0;
+                const isClosed = selectedComplaint.status === 'Closed' || selectedComplaint.status === 'Resolved';
+                const progressPct = STATUS_PROGRESS[selectedComplaint.status] || 10;
+                const priorityScore = selectedComplaint.priorityScore || 50;
+
+                return (
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    {/* Resolution Progress */}
+                    <div className="bg-slate-50 border border-border-subtle rounded-xl p-3 space-y-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-text-secondary">Resolution Progress</p>
+                      <div className="flex items-end justify-between">
+                        <span className="text-2xl font-black text-primary">{progressPct}%</span>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                          isClosed ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                        }`}>{selectedComplaint.status}</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ${
+                            isClosed ? 'bg-green-500' : 'bg-gradient-to-r from-blue-500 to-violet-500'
+                          }`}
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* SLA Countdown */}
+                    <div className={`border rounded-xl p-3 space-y-2 ${
+                      isClosed
+                        ? 'bg-green-50 border-green-200'
+                        : isBreached
+                        ? 'bg-red-50 border-red-300'
+                        : pct > 75
+                        ? 'bg-amber-50 border-amber-200'
+                        : 'bg-slate-50 border-border-subtle'
+                    }`}>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-text-secondary">SLA Countdown</p>
+                      <span className={`text-lg font-black tabular-nums block leading-tight ${
+                        isClosed ? 'text-green-600' : isBreached ? 'text-red-600' : pct > 75 ? 'text-amber-600' : 'text-primary'
+                      }`}>
+                        {isClosed ? '✓ Closed' : formatCountdown(remaining)}
+                      </span>
+                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            isClosed ? 'bg-green-400' : isBreached ? 'bg-red-500' : pct > 75 ? 'bg-amber-400' : 'bg-blue-400'
+                          }`}
+                          style={{ width: `${Math.min(100, pct)}%` }}
+                        />
+                      </div>
+                      <p className="text-[8px] text-text-secondary font-semibold">
+                        SLA: {selectedComplaint.priority || 'Medium'} priority · {Math.round(getSlaMs(selectedComplaint.priority) / 3600000)}h window
+                      </p>
+                    </div>
+
+                    {/* Priority Score */}
+                    <div className="bg-slate-50 border border-border-subtle rounded-xl p-3 space-y-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-text-secondary">Priority Score</p>
+                      <div className="flex items-end justify-between">
+                        <span className="text-2xl font-black text-primary">{priorityScore}</span>
+                        <span className="text-[9px] text-text-secondary font-semibold">/100</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            priorityScore >= 80 ? 'bg-red-500' : priorityScore >= 60 ? 'bg-orange-400' : priorityScore >= 40 ? 'bg-yellow-400' : 'bg-blue-400'
+                          }`}
+                          style={{ width: `${priorityScore}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Assigned Team */}
+                    <div className="bg-slate-50 border border-border-subtle rounded-xl p-3 space-y-1.5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-text-secondary">Assigned Team</p>
+                      <p className="text-xs font-bold text-primary leading-snug">
+                        {selectedComplaint.assignedTeam || 'Not yet assigned'}
+                      </p>
+                      {selectedComplaint.assignedTeam && (
+                        <span className="text-[9px] bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded-full font-bold">Active</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Progress Stepper Timeline - 6 Stages */}
               <div className="relative pl-6 space-y-6">
                 <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-slate-200"></div>
@@ -1056,7 +1324,7 @@ export function CitizenPortal() {
               </div>
 
               {/* CITIZEN VERIFICATION SYSTEM PANEL */}
-              {selectedComplaint.status === 'Resolved' && !isAdmin && (
+              {(selectedComplaint.status === 'Resolved' || selectedComplaint.status === 'Closed') && !isAdmin && (
                 <div className="mt-6 pt-6 border-t border-border-subtle/80 space-y-4 animate-fade-in-up">
                   <h4 className="font-bold text-xs text-primary flex items-center gap-1.5 uppercase tracking-wider">
                     <MessageSquare className="w-4 h-4 text-purple-600" /> Citizen Verification System
@@ -1151,7 +1419,7 @@ export function CitizenPortal() {
                         <input 
                           type="file"
                           ref={followUpInputRef}
-                          accept=".png,.jpg,.jpeg"
+                          accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
                           onChange={(e) => handleFollowUpFile(e.target.files?.[0])}
                           style={{ display: 'none' }}
                         />
@@ -1188,11 +1456,12 @@ export function CitizenPortal() {
                       <button 
                         type="button"
                         onClick={() => handleVerify(selectedComplaint.id)}
+                        disabled={isVerifying || !!followUpFile}
                         className={`w-full text-white font-bold py-2 rounded-lg text-xs transition-colors cursor-pointer ${
                           isConfirmed ? 'bg-purple-600 hover:bg-purple-700' : 'bg-red-600 hover:bg-red-700'
-                        }`}
+                        } disabled:opacity-50`}
                       >
-                        {isConfirmed ? 'Verify Repair & Submit Rating' : 'Reject Repair & Re-open Complaint'}
+                        {isVerifying ? 'Submitting Verification...' : isConfirmed ? 'Verify Repair & Submit Rating' : 'Reject Repair & Re-open Complaint'}
                       </button>
                     </div>
                   )}

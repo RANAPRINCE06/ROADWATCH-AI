@@ -455,22 +455,33 @@ export interface CitizenComplaint {
   title: string;
   description: string;
   locationName: string;
+  location?: string; // Compatibility with local mock db
   imageUrl: string;
   lat: number;
   lng: number;
   x: number;
   y: number;
-  status: 'Submitted' | 'Verified' | 'Assigned' | 'Repair In Progress' | 'Repairing' | 'Resolved' | 'Closed';
+  status: 'Submitted' | 'Verified' | 'Assigned' | 'Repairing' | 'Repair In Progress' | 'Resolved' | 'Closed';
   timestamp: string;
+  createdAt?: string; // Compatibility with local mock db
+  citizenId?: string;
   votes: number;
-  priority?: 'Low' | 'Medium' | 'High' | 'Critical';
+  upvotes?: number; // Compatibility with local mock db
+
+  priority?: 'Critical' | 'High' | 'Medium' | 'Low';
+  priorityScore?: number;
   hazardType?: string;
+  assignedTeam?: string;
+  resolvedAt?: string;
+  notes?: string;
+  followUpImageUrl?: string;
 
   citizenVerified?: boolean;
   citizenRating?: number;
   citizenFeedback?: string;
   satisfactionScore?: number;
   resolutionQualityScore?: number;
+  citizenRejected?: boolean;
 }
 
 const DEFAULT_SENSORS: SensorDevice[] = [
@@ -570,25 +581,28 @@ export function saveComplaints(complaints: CitizenComplaint[]): void {
   }
 }
 
-export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp' | 'votes' | 'status'> & { id?: string; timestamp?: string }): CitizenComplaint {
+export async function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp' | 'votes' | 'status'> & { id?: string; timestamp?: string }): Promise<CitizenComplaint> {
   const id = complaint.id || `COMP-${Math.floor(100000 + Math.random() * 900000)}`;
   const timestamp = complaint.timestamp || new Date().toISOString();
+  const priorityScore = complaint.priority === 'Critical' ? 95 : complaint.priority === 'High' ? 80 : complaint.priority === 'Medium' ? 55 : 30;
   
   const newComplaint: CitizenComplaint = {
     ...complaint,
     id,
     status: 'Submitted',
     timestamp,
+    createdAt: complaint.createdAt || timestamp,
+    location: complaint.location || complaint.locationName,
+    citizenId: complaint.citizenId || 'citizen_demo',
     votes: 1,
+    upvotes: 1,
+    priorityScore,
     citizenVerified: false,
     citizenRating: 0,
     citizenFeedback: '',
     satisfactionScore: 0,
     resolutionQualityScore: 0
   };
-
-  // Write to Firestore complaints collection
-  setDocument(getDocRef('complaints', id), newComplaint);
 
   // Sync to Reports (create corresponding Report)
   const matchingReportId = `rep-from-${id}`;
@@ -607,21 +621,22 @@ export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp
     imageUrl: newComplaint.imageUrl,
     description: newComplaint.description,
     status: 'Detected',
-    priorityScore: (newComplaint.priority === 'Critical' ? 95 : newComplaint.priority === 'High' ? 80 : newComplaint.priority === 'Medium' ? 55 : 30),
+    priorityScore,
     estimatedRisk: (newComplaint.priority === 'Critical' ? 'High Accident Risk' : newComplaint.priority === 'High' ? 'Moderate Damage Risk' : 'Minor Road Decay'),
     recommendedRepairTime: (newComplaint.priority === 'Critical' ? 'Within 24 Hours' : newComplaint.priority === 'High' ? 'Within 3 Days' : 'Within 7 Days'),
     beforeImageUrl: newComplaint.imageUrl
   };
-  setDocument(getDocRef('reports', matchingReportId), newReport);
-
-  // Generate notification in Firestore
-  addDocument(getCollectionRef('notifications'), {
-    title: 'Complaint Submitted',
-    message: `Your report "${newComplaint.title}" has been successfully submitted.`,
-    timestamp,
-    read: false,
-    citizenId: 'citizen_demo'
-  });
+  await Promise.all([
+    setDocument(getDocRef('complaints', id), newComplaint),
+    setDocument(getDocRef('reports', matchingReportId), newReport),
+    addDocument(getCollectionRef('notifications'), {
+      title: 'Complaint Submitted',
+      message: `Your report "${newComplaint.title}" has been successfully submitted.`,
+      timestamp,
+      read: false,
+      citizenId: 'citizen_demo'
+    })
+  ]);
 
   addLog('Citizen Portal', `New citizen complaint filed: ${newComplaint.title} at ${newComplaint.locationName}`, 'INFO');
   return newComplaint;
