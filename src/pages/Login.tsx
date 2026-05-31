@@ -85,6 +85,8 @@ export function Login() {
     if (realFirebaseActive) {
       const auth = getAuth();
       const provider = new GoogleAuthProvider();
+      // Suppress Cross-Origin-Opener-Policy popup polling warnings
+      provider.setCustomParameters({ prompt: 'select_account' });
       try {
         const result = await signInWithPopup(auth, provider);
         const user = result.user;
