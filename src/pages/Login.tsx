@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getAuth, 
-  signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   signInWithEmailAndPassword 
 } from 'firebase/auth';
@@ -77,7 +78,34 @@ export function Login() {
     }
   };
 
-  // Handle Google Login
+  // On mount: handle the redirect result from Google Sign-In (signInWithRedirect)
+  // This runs after Google redirects back to the app — no popup = no COOP warnings.
+  useEffect(() => {
+    if (!realFirebaseActive) return;
+    const auth = getAuth();
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!result) return; // No pending redirect result
+        const user = result.user;
+        const savedRole = (localStorage.getItem('roadwatch_pending_google_role') as typeof role) || 'authority';
+        localStorage.removeItem('roadwatch_pending_google_role');
+        try {
+          const userDocRef = getDocRef('users', user.uid);
+          await setDocument(userDocRef, { email: user.email, role: savedRole });
+        } catch (firestoreErr) {
+          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
+        }
+        const sessionUser = { email: user.email, uid: user.uid, role: savedRole, provider: 'google' };
+        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
+        showToast('Login successful! Redirecting to Command Center...', 'success');
+        setTimeout(() => routeUser(savedRole), 1200);
+      })
+      .catch((err) => {
+        if (err.code !== 'auth/no-auth-event') handleFirebaseError(err);
+      });
+  }, []);
+
+  // Handle Google Login — uses redirect (no popup) to avoid COOP browser warnings
   const handleGoogleLogin = async () => {
     setIsAuthenticating(true);
     setToast(null);
@@ -85,40 +113,18 @@ export function Login() {
     if (realFirebaseActive) {
       const auth = getAuth();
       const provider = new GoogleAuthProvider();
-      // Suppress Cross-Origin-Opener-Policy popup polling warnings
       provider.setCustomParameters({ prompt: 'select_account' });
+      // Save chosen role so we can restore it after the redirect returns
+      localStorage.setItem('roadwatch_pending_google_role', role);
       try {
-        const result = await signInWithPopup(auth, provider);
-        const user = result.user;
-        
-        // Store user role in Firestore (catch errors to prevent blocking login)
-        try {
-          const userDocRef = getDocRef('users', user.uid);
-          await setDocument(userDocRef, { email: user.email, role: role });
-        } catch (firestoreErr) {
-          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
-        }
-
-        // Save user session with chosen role
-        const sessionUser = {
-          email: user.email,
-          uid: user.uid,
-          role: role,
-          provider: 'google'
-        };
-        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
-        
-        showToast('Login successful! Redirecting to Command Center...', 'success');
-        
-        setTimeout(() => {
-          routeUser(role);
-        }, 1200);
+        await signInWithRedirect(auth, provider);
+        // Browser navigates away here — code below won't execute
       } catch (err: any) {
         handleFirebaseError(err);
         setIsAuthenticating(false);
       }
     } else {
-      // Simulate Google Sign-In
+      // Simulate Google Sign-In in mock mode
       setTimeout(() => {
         const sessionUser = {
           email: 'google.demo@roadwatch.gov',
@@ -128,10 +134,7 @@ export function Login() {
         };
         localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
         showToast('Demo Google Login successful! Redirecting...', 'success');
-        
-        setTimeout(() => {
-          routeUser(role);
-        }, 1200);
+        setTimeout(() => routeUser(role), 1200);
       }, 1500);
     }
   };
