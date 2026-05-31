@@ -221,7 +221,7 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
   const priorityScore = report.priorityScore || (severity === 'Critical' ? 92 : severity === 'Active' ? 76 : severity === 'Scheduled' ? 60 : 45);
   const estimatedRisk = report.estimatedRisk || (severity === 'Critical' ? 'High Accident Risk' : severity === 'Active' ? 'Moderate Damage Risk' : 'Minor Road Decay');
   const recommendedRepairTime = report.recommendedRepairTime || (severity === 'Critical' ? 'Within 24 Hours' : severity === 'Active' ? 'Within 3 Days' : 'Within 7 Days');
-  const status = report.status || (report.source === 'AI Detected' || report.source?.includes('AI') ? 'Verified' : 'Detected');
+  const status = report.status || (((report.source === 'AI Detected' || report.source?.includes('AI')) && !report.source?.includes('Citizen')) ? 'Verified' : 'Detected');
 
   const newReport: Report = {
     ...report,

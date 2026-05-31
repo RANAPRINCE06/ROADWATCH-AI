@@ -140,7 +140,7 @@ export function Dashboard() {
       const severity = r.severity || 'Active';
       const status = r.resolved 
         ? 'Resolved' 
-        : (r.status || (r.source === 'AI Detected' || r.source?.includes('AI') ? 'Verified' : 'Detected'));
+        : (r.status || (((r.source === 'AI Detected' || r.source?.includes('AI')) && !r.source?.includes('Citizen')) ? 'Verified' : 'Detected'));
       
       const priorityScore = r.priorityScore || (severity === 'Critical' ? 92 : severity === 'Active' ? 76 : 48);
       const estimatedRisk = r.estimatedRisk || (severity === 'Critical' ? 'High Accident Risk' : 'Moderate Pavement Decay');
