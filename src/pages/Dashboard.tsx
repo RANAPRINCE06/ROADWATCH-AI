@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
+declare const google: any;
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -91,6 +93,55 @@ function ImageComparisonSlider({ beforeUrl, afterUrl }: { beforeUrl: string; aft
   );
 }
 
+// React Portal wrapper to render React components natively inside Google Maps overlays
+interface PortalOverlayProps {
+  map: any;
+  position: { lat: number; lng: number };
+  children: React.ReactNode;
+}
+
+const GoogleMapPortalOverlay: React.FC<PortalOverlayProps> = ({ map, position, children }) => {
+  const [container] = useState(() => document.createElement('div'));
+
+  useEffect(() => {
+    if (!map || !(window as any).google?.maps) return;
+
+    const overlay = new google.maps.OverlayView();
+
+    overlay.onAdd = () => {
+      container.style.position = 'absolute';
+      container.style.zIndex = '50';
+      overlay.getPanes()?.overlayMouseTarget.appendChild(container);
+    };
+
+    overlay.draw = () => {
+      const projection = overlay.getProjection();
+      if (!projection) return;
+      const latLng = new google.maps.LatLng(position.lat, position.lng);
+      const pos = projection.fromLatLngToDivPixel(latLng);
+      if (pos) {
+        container.style.left = `${pos.x}px`;
+        container.style.top = `${pos.y}px`;
+        container.style.transform = 'translate(-50%, -50%)';
+      }
+    };
+
+    overlay.onRemove = () => {
+      if (container.parentNode && container.parentNode.contains(container)) {
+        container.parentNode.removeChild(container);
+      }
+    };
+
+    overlay.setMap(map);
+
+    return () => {
+      overlay.setMap(null);
+    };
+  }, [map, position, container]);
+
+  return ReactDOM.createPortal(children, container);
+};
+
 export function Dashboard() {
   const [reports, setReports] = useState<Report[]>([]);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
@@ -114,6 +165,145 @@ export function Dashboard() {
   const [mapPan, setMapPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Real Google Maps States
+  const [apiLoaded, setApiLoaded] = useState(false);
+  const [map, setMap] = useState<any>(null);
+  const [isSandboxMode, setIsSandboxMode] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+
+  // Dynamic script loader for Google Maps in Dashboard
+  useEffect(() => {
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+    
+    const loadScript = () => {
+      if ((window as any).google && (window as any).google.maps) {
+        setApiLoaded(true);
+        return;
+      }
+
+      (window as any).initGoogleMapCallbackDashboard = () => {
+        setApiLoaded(true);
+      };
+
+      (window as any).gm_authFailure = () => {
+        console.warn("Google Maps API Authentication failed. Falling back to Sandbox Mode.");
+        setIsSandboxMode(true);
+      };
+
+      const existing = document.getElementById('google-maps-api-script') as HTMLScriptElement;
+      if (existing) {
+        if ((window as any).google && (window as any).google.maps) {
+          setApiLoaded(true);
+        } else {
+          existing.addEventListener('load', () => {
+            if ((window as any).google && (window as any).google.maps) {
+              setApiLoaded(true);
+            }
+          });
+        }
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.id = 'google-maps-api-script';
+      const keyQuery = apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY' ? `key=${apiKey}&` : '';
+      if (!keyQuery) {
+        setIsSandboxMode(true);
+      }
+      script.src = `https://maps.googleapis.com/maps/api/js?${keyQuery}loading=async&callback=initGoogleMapCallbackDashboard&libraries=places,geometry`;
+      script.async = true;
+      script.defer = true;
+      
+      script.addEventListener('load', () => {
+        if ((window as any).google && (window as any).google.maps) {
+          setApiLoaded(true);
+        }
+      });
+      script.addEventListener('error', () => {
+        console.error("Google Maps API script load failed. Switching to Sandbox Mode.");
+        setIsSandboxMode(true);
+      });
+      
+      document.head.appendChild(script);
+    };
+
+    loadScript();
+  }, []);
+
+  // Map instantiation
+  useEffect(() => {
+    if (!apiLoaded || !mapContainerRef.current || map || isSandboxMode) return;
+
+    try {
+      const silverMapStyles = [
+        { elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
+        { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+        { elementType: "labels.text.fill", stylers: [{ color: "#616161" }] },
+        { elementType: "labels.text.stroke", stylers: [{ color: "#f5f5f5" }] },
+        { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
+        { featureType: "poi", stylers: [{ visibility: "off" }] },
+        { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+        { featureType: "road.arterial", elementType: "geometry.fill", stylers: [{ color: "#e0e0e0" }] },
+        { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#dadada" }] },
+        { featureType: "road.highway", elementType: "geometry.fill", stylers: [{ color: "#dadada" }] },
+        { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9c9c9" }] },
+        { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#9e9e9e" }] }
+      ];
+
+      const googleMap = new google.maps.Map(mapContainerRef.current, {
+        center: { lat: 1.2950, lng: 103.8500 }, // Central Singapore focus
+        zoom: 13,
+        styles: silverMapStyles,
+        disableDefaultUI: true,
+        zoomControl: false,
+        mapTypeControl: false,
+        streetViewControl: false,
+      });
+
+      setMap(googleMap);
+    } catch (e) {
+      console.error("Google Maps initialization failed: ", e);
+      setIsSandboxMode(true);
+    }
+  }, [apiLoaded, map, isSandboxMode]);
+
+  // Synchronize map layer (satellite vs color roadmap)
+  useEffect(() => {
+    if (!map || !(window as any).google?.maps) return;
+    if (mapLayer === 'satellite') {
+      map.setMapTypeId(google.maps.MapTypeId.HYBRID);
+    } else {
+      map.setMapTypeId(google.maps.MapTypeId.ROADMAP);
+    }
+  }, [mapLayer, map]);
+
+  // Synchronize selection centering
+  useEffect(() => {
+    if (!map || isSandboxMode || !selectedReportId) return;
+    const found = reports.find(r => r.id === selectedReportId);
+    if (found && found.lat && found.lng) {
+      map.panTo({ lat: found.lat, lng: found.lng });
+      map.setZoom(15);
+    }
+  }, [selectedReportId, map, reports, isSandboxMode]);
+
+  // Real Zoom handlers
+  const handleZoomIn = () => {
+    if (map) {
+      map.setZoom(map.getZoom() + 1);
+    } else {
+      setZoomLevel(prev => Math.min(2.0, prev + 0.25));
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (map) {
+      map.setZoom(map.getZoom() - 1);
+    } else {
+      setZoomLevel(prev => Math.max(1.0, prev - 0.25));
+    }
+  };
 
   // Simulator State (9-stage workflow)
   const [simActive, setSimActive] = useState<boolean>(false);
@@ -662,95 +852,132 @@ export function Dashboard() {
                 >
                   <Layers className="w-4 h-4" />
                 </button>
-                <button onClick={() => setZoomLevel(prev => Math.min(2.0, prev + 0.25))} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
+                <button onClick={handleZoomIn} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
                   <ZoomIn className="w-4 h-4" />
                 </button>
-                <button onClick={() => setZoomLevel(prev => Math.max(1.0, prev - 0.25))} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
+                <button onClick={handleZoomOut} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
                   <ZoomOut className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div 
-              className="w-full h-full bg-surface-dim relative overflow-hidden select-none"
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              style={{ cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
-            >
+            {/* REAL GOOGLE MAP CONTAINER */}
+            {apiLoaded && !isSandboxMode ? (
+              <div ref={mapContainerRef} className="w-full h-full absolute inset-0 z-0 bg-slate-100" />
+            ) : (
               <div 
-                className={`w-full h-full relative origin-center ${isDragging ? '' : 'transition-transform duration-300 ease-out'}`}
-                style={{ transform: `scale(${zoomLevel}) translate(${mapPan.x / zoomLevel}px, ${mapPan.y / zoomLevel}px)` }}
+                className="w-full h-full bg-surface-dim relative overflow-hidden select-none"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                style={{ cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
               >
-                <img 
-                  className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-102 ${
-                    mapLayer === 'satellite' ? 'grayscale opacity-40' : 
-                    mapLayer === 'color' ? 'opacity-85' : 
-                    'grayscale opacity-35'
-                  }`} 
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuHFT25LrIudFzN9hASHnRgcA8BFks14OkKHmCUQHsIgxP3_efPdHHmYslWisBVEx-kYPAL-txAPhVyEdBWysgahj1JzAnfyT5ZDTy2s0D9OlsRCR4Ptdllch1EeRvlylM3nqORXTkFaZrifD2-giS6p6l0A1aYfo-GaksLZgNQ4RGx2i2L8P3hRQddcA-WQqfF6xLKPU35tm4cCYL8xEECIOHkl-TNtw2HmoENL3JBWVs9vbh25GB2z1RhXII3CXQ_qhCdGJn7lo" 
-                  alt="City Grid"
-                  draggable="false"
-                />
+                <div 
+                  className={`w-full h-full relative origin-center ${isDragging ? '' : 'transition-transform duration-300 ease-out'}`}
+                  style={{ transform: `scale(${zoomLevel}) translate(${mapPan.x / zoomLevel}px, ${mapPan.y / zoomLevel}px)` }}
+                >
+                  <img 
+                    className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-102 ${
+                      mapLayer === 'satellite' ? 'grayscale opacity-40' : 
+                      mapLayer === 'color' ? 'opacity-85' : 
+                      'grayscale opacity-35'
+                    }`} 
+                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuHFT25LrIudFzN9hASHnRgcA8BFks14OkKHmCUQHsIgxP3_efPdHHmYslWisBVEx-kYPAL-txAPhVyEdBWysgahj1JzAnfyT5ZDTy2s0D9OlsRCR4Ptdllch1EeRvlylM3nqORXTkFaZrifD2-giS6p6l0A1aYfo-GaksLZgNQ4RGx2i2L8P3hRQddcA-WQqfF6xLKPU35tm4cCYL8xEECIOHkl-TNtw2HmoENL3JBWVs9vbh25GB2z1RhXII3CXQ_qhCdGJn7lo" 
+                    alt="City Grid"
+                    draggable="false"
+                  />
 
-                {mapLayer === 'heatmap' && (
-                  <div className="absolute inset-0 pointer-events-none mix-blend-multiply opacity-80 animate-pulse bg-gradient-to-tr from-red-500/10 via-yellow-500/5 to-transparent">
-                    {filteredActiveReports.map(r => (
+                  {mapLayer === 'heatmap' && (
+                    <div className="absolute inset-0 pointer-events-none mix-blend-multiply opacity-80 animate-pulse bg-gradient-to-tr from-red-500/10 via-yellow-500/5 to-transparent">
+                      {filteredActiveReports.map(r => (
+                        <div 
+                          key={`heat-${r.id}`}
+                          className="absolute rounded-full filter blur-xl"
+                          style={{
+                            top: `${r.y}%`,
+                            left: `${r.x}%`,
+                            width: r.severity === 'Critical' ? '120px' : '80px',
+                            height: r.severity === 'Critical' ? '120px' : '80px',
+                            transform: 'translate(-50%, -50%)',
+                            backgroundColor: r.severity === 'Critical' ? 'rgba(239, 68, 68, 0.45)' : 'rgba(245, 158, 11, 0.35)',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {filteredActiveReports.map((report) => {
+                    const isSelected = selectedReportId === report.id;
+                    const isCritical = report.severity === 'Critical';
+                    const colorClass = isCritical ? 'bg-red-600 border-white text-white' : 'bg-safety-yellow border-black text-primary';
+                    
+                    return (
                       <div 
-                        key={`heat-${r.id}`}
-                        className="absolute rounded-full filter blur-xl"
-                        style={{
-                          top: `${r.y}%`,
-                          left: `${r.x}%`,
-                          width: r.severity === 'Critical' ? '120px' : '80px',
-                          height: r.severity === 'Critical' ? '120px' : '80px',
-                          transform: 'translate(-50%, -50%)',
-                          backgroundColor: r.severity === 'Critical' ? 'rgba(239, 68, 68, 0.45)' : 'rgba(245, 158, 11, 0.35)',
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {filteredActiveReports.map((report) => {
-                  const isSelected = selectedReportId === report.id;
-                  const isCritical = report.severity === 'Critical';
-                  const colorClass = isCritical ? 'bg-red-600 border-white text-white' : 'bg-safety-yellow border-black text-primary';
-                  
-                  return (
-                    <div 
-                      key={report.id}
-                      className={`absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 z-20 ${
-                        isSelected ? 'scale-130 z-30' : 'hover:scale-115'
-                      }`}
-                      style={{ top: `${report.y}%`, left: `${report.x}%` }}
-                      onClick={() => setSelectedReportId(report.id)}
-                      onMouseEnter={() => setHoveredReportId(report.id)}
-                      onMouseLeave={() => setHoveredReportId(null)}
-                    >
-                      <div className={`absolute inset-0 rounded-full animate-ping ${isCritical ? 'bg-red-600/30' : 'bg-safety-yellow/30'}`}></div>
-                      <div className={`absolute inset-1 rounded-full border-2 shadow flex items-center justify-center text-xs font-bold ${colorClass}`}>
-                        <span>{isCritical ? '!' : '•'}</span>
-                      </div>
-
-                      {(hoveredReportId === report.id || isSelected) && !selectedReport && (
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[100] w-44 bg-white rounded-lg shadow-xl border border-border-subtle p-2 pointer-events-none animate-fade-in-up">
-                          <p className="text-[10px] font-black text-primary truncate leading-tight">{report.title}</p>
-                          <p className="text-[8px] text-text-secondary mt-0.5 truncate">{report.location}</p>
-                          <div className="flex gap-1.5 items-center mt-1">
-                            <span className="text-[8px] font-bold bg-slate-100 px-1 rounded">{report.status}</span>
-                            <span className="text-[8px] font-bold text-red-500">{report.severity}</span>
-                          </div>
+                        key={report.id}
+                        className={`absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 z-20 ${
+                          isSelected ? 'scale-130 z-30' : 'hover:scale-115'
+                        }`}
+                        style={{ top: `${report.y}%`, left: `${report.x}%` }}
+                        onClick={() => setSelectedReportId(report.id)}
+                        onMouseEnter={() => setHoveredReportId(report.id)}
+                        onMouseLeave={() => setHoveredReportId(null)}
+                      >
+                        <div className={`absolute inset-0 rounded-full animate-ping ${isCritical ? 'bg-red-600/30' : 'bg-safety-yellow/30'}`}></div>
+                        <div className={`absolute inset-1 rounded-full border-2 shadow flex items-center justify-center text-xs font-bold ${colorClass}`}>
+                          <span>{isCritical ? '!' : '•'}</span>
                         </div>
+
+                        {(hoveredReportId === report.id || isSelected) && !selectedReport && (
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[100] w-44 bg-white rounded-lg shadow-xl border border-border-subtle p-2 pointer-events-none animate-fade-in-up">
+                            <p className="text-[10px] font-black text-primary truncate leading-tight">{report.title}</p>
+                            <p className="text-[8px] text-text-secondary mt-0.5 truncate">{report.location}</p>
+                          </div>
                       )}
                     </div>
                   );
                 })}
               </div>
             </div>
+          )}
 
-            {selectedReport && (
+          {/* REAL GOOGLE MAP CUSTOM MARKERS */}
+          {apiLoaded && !isSandboxMode && map && filteredActiveReports.map((report) => {
+            const isSelected = selectedReportId === report.id;
+            const isCritical = report.severity === 'Critical';
+            const colorClass = isCritical ? 'bg-red-600 border-white text-white' : 'bg-safety-yellow border-black text-primary';
+            
+            return (
+              <GoogleMapPortalOverlay
+                key={`map-overlay-${report.id}`}
+                map={map}
+                position={{ lat: report.lat || 1.2950, lng: report.lng || 103.8500 }}
+              >
+                <div 
+                  className={`relative w-8 h-8 cursor-pointer transition-all duration-300 z-20 ${
+                    isSelected ? 'scale-130 z-30' : 'hover:scale-115'
+                  }`}
+                  onClick={() => setSelectedReportId(report.id)}
+                  onMouseEnter={() => setHoveredReportId(report.id)}
+                  onMouseLeave={() => setHoveredReportId(null)}
+                >
+                  <div className={`absolute inset-0 rounded-full animate-ping ${isCritical ? 'bg-red-600/30' : 'bg-safety-yellow/30'}`}></div>
+                  <div className={`absolute inset-1 rounded-full border-2 shadow flex items-center justify-center text-xs font-bold ${colorClass}`}>
+                    <span>{isCritical ? '!' : '•'}</span>
+                  </div>
+
+                  {(hoveredReportId === report.id || isSelected) && !selectedReport && (
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[100] w-44 bg-white rounded-lg shadow-xl border border-border-subtle p-2 pointer-events-none animate-fade-in-up">
+                      <p className="text-[10px] font-black text-primary truncate leading-tight">{report.title}</p>
+                      <p className="text-[8px] text-text-secondary mt-0.5 truncate">{report.location}</p>
+                    </div>
+                  )}
+                </div>
+              </GoogleMapPortalOverlay>
+            );
+          })}
+
+          {selectedReport && (
               <div className="absolute top-4 right-4 z-20 glass-card p-3 rounded-xl max-w-[240px] shadow-lg animate-fade-in-up border border-border-subtle bg-white/95">
                 <div className="flex justify-between items-start mb-1">
                   <h4 className="font-bold text-primary text-xs tracking-tight truncate flex-1">{selectedReport.title}</h4>
