@@ -218,40 +218,12 @@ export function Landing() {
             </div>
 
             {/* Illustration */}
-            <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-xl p-8 h-96 flex flex-col justify-between relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none map-bg"></div>
-              
-              <div className="space-y-2 relative z-10">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="text-red-500 w-5 h-5" />
-                  <span className="text-xs font-bold text-red-600 uppercase tracking-widest">Unmonitored Hazard Zone</span>
-                </div>
-                <h4 className="text-lg font-bold text-slate-900">Reactive Infrastructure Model</h4>
-                <p className="text-xs text-slate-600 max-w-sm">
-                  Traditional pipeline gaps: Citizen complaint takes 15+ days to reach maintenance logs, increasing road accident rates by 28%.
-                </p>
-              </div>
-
-              {/* Graphic representation */}
-              <div className="border border-slate-200 bg-white rounded-lg p-4 relative z-10 shadow-sm flex flex-col gap-2 mt-4">
-                <div className="flex justify-between text-[10px] border-b border-slate-200 pb-1 text-slate-500 font-mono">
-                  <span>SEGMENT: STAMFORD-RD</span>
-                  <span className="text-red-500 font-bold">CRITICAL DECAY</span>
-                </div>
-                <div className="flex items-center gap-3 py-1">
-                  <div className="w-10 h-10 bg-red-50 border border-red-200 rounded flex items-center justify-center text-red-500 text-base font-bold">
-                    !
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <div className="h-3 bg-slate-100 rounded w-3/4"></div>
-                    <div className="h-2 bg-slate-100 rounded w-1/2"></div>
-                  </div>
-                </div>
-                <div className="text-[10px] text-slate-600 flex justify-between items-center font-medium mt-1">
-                  <span>Days Since Incident: <strong className="text-slate-900 font-bold">18 Days</strong></span>
-                  <span className="text-[8px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold uppercase">No Crew Dispatched</span>
-                </div>
-              </div>
+            <div className="lg:col-span-5 h-96 rounded-xl overflow-hidden shadow-sm border border-slate-200">
+              <img 
+                src="/road-repair.png" 
+                alt="Road safety repair team working on-site" 
+                className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"
+              />
             </div>
           </div>
         </div>
