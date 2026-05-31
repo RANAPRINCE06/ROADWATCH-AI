@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getAuth, 
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   GoogleAuthProvider, 
   signInWithEmailAndPassword 
 } from 'firebase/auth';
@@ -78,34 +77,7 @@ export function Login() {
     }
   };
 
-  // On mount: handle the redirect result from Google Sign-In (signInWithRedirect)
-  // This runs after Google redirects back to the app — no popup = no COOP warnings.
-  useEffect(() => {
-    if (!realFirebaseActive) return;
-    const auth = getAuth();
-    getRedirectResult(auth)
-      .then(async (result) => {
-        if (!result) return; // No pending redirect result
-        const user = result.user;
-        const savedRole = (localStorage.getItem('roadwatch_pending_google_role') as typeof role) || 'authority';
-        localStorage.removeItem('roadwatch_pending_google_role');
-        try {
-          const userDocRef = getDocRef('users', user.uid);
-          await setDocument(userDocRef, { email: user.email, role: savedRole });
-        } catch (firestoreErr) {
-          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
-        }
-        const sessionUser = { email: user.email, uid: user.uid, role: savedRole, provider: 'google' };
-        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
-        showToast('Login successful! Redirecting to Command Center...', 'success');
-        setTimeout(() => routeUser(savedRole), 1200);
-      })
-      .catch((err) => {
-        if (err.code !== 'auth/no-auth-event') handleFirebaseError(err);
-      });
-  }, []);
-
-  // Handle Google Login — uses redirect (no popup) to avoid COOP browser warnings
+  // Handle Google Login
   const handleGoogleLogin = async () => {
     setIsAuthenticating(true);
     setToast(null);
@@ -114,11 +86,22 @@ export function Login() {
       const auth = getAuth();
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
-      // Save chosen role so we can restore it after the redirect returns
-      localStorage.setItem('roadwatch_pending_google_role', role);
       try {
-        await signInWithRedirect(auth, provider);
-        // Browser navigates away here — code below won't execute
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+
+        // Store user role in Firestore
+        try {
+          const userDocRef = getDocRef('users', user.uid);
+          await setDocument(userDocRef, { email: user.email, role: role });
+        } catch (firestoreErr) {
+          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
+        }
+
+        const sessionUser = { email: user.email, uid: user.uid, role: role, provider: 'google' };
+        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
+        showToast('Login successful! Redirecting to Command Center...', 'success');
+        setTimeout(() => routeUser(role), 1200);
       } catch (err: any) {
         handleFirebaseError(err);
         setIsAuthenticating(false);
