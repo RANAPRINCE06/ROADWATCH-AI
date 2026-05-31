@@ -251,6 +251,8 @@ export function LiveHeatmap() {
         detectedTime: timeStr,
         lat: r.lat || 1.3048,
         lng: r.lng || 103.8318,
+        x: r.x || 50,
+        y: r.y || 50,
         details: r.description || `Active ${r.title} at ${r.location}.`
       };
     });
@@ -523,8 +525,8 @@ export function LiveHeatmap() {
 
   // Custom Heatmap implementation is handled reactively using GoogleMapPortalOverlay inside the JSX
 
-  const activeHazardsCount = filteredMarkers.length * 3 + Math.round(timelineVal / 4);
-  const isHighRisk = activeHazardsCount > 15;
+  const activeHazardsCount = filteredMarkers.length;
+  const isHighRisk = activeHazardsCount > 5;
 
   const handleZoomIn = () => {
     if (map) map.setZoom(map.getZoom() + 1);
@@ -800,35 +802,85 @@ export function LiveHeatmap() {
           
           {/* Animated fallback mock indicators when Google Maps API fails/loads blank */}
           <div className="absolute inset-0 z-10 pointer-events-auto">
-            {/* Sector 4 Orchard Road Marker */}
-            <div className="absolute top-[42%] left-[30%] pointer-events-auto cursor-pointer group">
-              <div className="relative flex flex-col items-center">
-                <span className="absolute inline-flex h-9 w-9 rounded-full bg-safety-yellow opacity-60 animate-ping" />
-                <div className="relative z-10 p-2 rounded-full bg-safety-yellow text-primary border border-yellow-300 shadow-2xl">
-                  <AlertTriangle className="w-4 h-4 text-primary" />
-                </div>
-              </div>
-            </div>
+            {filteredMarkers.map((marker) => {
+              const isSelected = selectedMarkerId === marker.id;
+              return (
+                <div 
+                  key={marker.id}
+                  className="absolute pointer-events-auto cursor-pointer group"
+                  style={{ top: `${marker.y}%`, left: `${marker.x}%`, transform: 'translate(-50%, -50%)' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedMarkerId(isSelected ? null : marker.id);
+                  }}
+                >
+                  <div className="relative flex flex-col items-center">
+                    <span className={`absolute inline-flex h-9 w-9 rounded-full opacity-60 animate-ping ${
+                      marker.type === 'flooding' 
+                        ? 'bg-blue-500' 
+                        : marker.type === 'obstacle' 
+                          ? 'bg-orange-400' 
+                          : 'bg-safety-yellow'
+                    }`} />
+                    <motion.div 
+                      whileHover={{ scale: 1.15 }}
+                      className={`relative z-10 p-2 rounded-full shadow-2xl transition-all duration-200 ${getMarkerBgClass(marker.type)}`}
+                    >
+                      {getMarkerIcon(marker.type)}
+                    </motion.div>
 
-            {/* Bayfront Flooding Marker */}
-            <div className="absolute top-[58%] left-[55%] pointer-events-auto cursor-pointer group">
-              <div className="relative flex flex-col items-center">
-                <span className="absolute inline-flex h-9 w-9 rounded-full bg-blue-500 opacity-60 animate-ping" />
-                <div className="relative z-10 p-2 rounded-full bg-blue-600 text-white border border-blue-400 shadow-2xl">
-                  <Droplets className="w-4 h-4 text-white" />
+                    {/* Translucent detailed popup card */}
+                    <div 
+                      className={`absolute top-full mt-2 w-64 glass-panel p-4 rounded-xl shadow-2xl border border-white/20 text-on-surface z-50 text-left transition-all duration-300 pointer-events-auto ${
+                        isSelected 
+                          ? 'opacity-100 translate-y-0 scale-100 visible' 
+                          : 'opacity-0 translate-y-2 scale-95 invisible group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:visible'
+                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-bold text-sm text-primary">{marker.title}</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                          marker.severity === 'High' 
+                            ? 'bg-red-100 text-red-700' 
+                            : marker.severity === 'Medium' 
+                              ? 'bg-orange-100 text-orange-700' 
+                              : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {marker.severity}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1 text-[11px] text-text-secondary uppercase font-semibold mb-2">
+                        <MapPin className="w-3.5 h-3.5 text-red-500" />
+                        <span>{marker.location}</span>
+                      </div>
+                      
+                      <p className="text-xs text-text-secondary leading-relaxed mb-3">
+                        {marker.details}
+                      </p>
+                      
+                      <div className="flex justify-between items-center text-[10px] text-text-secondary border-t border-border-subtle pt-2">
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {marker.detectedTime}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            storageResolveReport(marker.id);
+                            setSelectedMarkerId(null);
+                          }}
+                          className="text-white bg-green-600 hover:bg-green-700 font-bold px-2.5 py-1 rounded-lg text-[10px] flex items-center gap-1 active:scale-95 transition-all cursor-pointer shadow-sm"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Cross Street Obstacle Marker */}
-            <div className="absolute top-[68%] left-[45%] pointer-events-auto cursor-pointer group">
-              <div className="relative flex flex-col items-center">
-                <span className="absolute inline-flex h-9 w-9 rounded-full bg-orange-400 opacity-60 animate-ping" />
-                <div className="relative z-10 p-2 rounded-full bg-orange-500 text-white border border-orange-400 shadow-2xl">
-                  <Hammer className="w-4 h-4 text-white" />
-                </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
         </div>
       )}
