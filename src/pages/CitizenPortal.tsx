@@ -60,7 +60,7 @@ const LOCALIZATION = {
     title: '市民路况监督门户',
     subtitle: '直接向市政工程部门报告街道损坏。',
     formHeader: '提交新投诉',
-    complaintTitle: '投诉标题',
+    complaintTitle: '投诉投诉',
     description: '详细说明',
     location: '位置名称',
     submit: '提交正式报告',
@@ -124,6 +124,39 @@ function determineHazardType(title: string, description: string): string {
   return 'Large Pothole';
 }
 
+const getStatusBadge = (status: string) => {
+  switch (status) {
+    case 'Submitted':
+      return { text: 'Submitted', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: '🔵' };
+    case 'Verified':
+      return { text: 'Verified', color: 'bg-amber-50 text-amber-700 border-amber-200', icon: '🟡' };
+    case 'Assigned':
+      return { text: 'Assigned', color: 'bg-orange-50 text-orange-700 border-orange-200', icon: '🟠' };
+    case 'Repairing':
+    case 'Repair In Progress':
+      return { text: 'Repairing', color: 'bg-purple-50 text-purple-700 border-purple-200', icon: '🟣' };
+    case 'Resolved':
+      return { text: 'Resolved', color: 'bg-green-50 text-green-700 border-green-200', icon: '🟢' };
+    case 'Closed':
+      return { text: 'Closed', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: '⚪' };
+    default:
+      return { text: status, color: 'bg-slate-100 text-slate-700 border-slate-200', icon: '⚪' };
+  }
+};
+
+const getTimeSince = (dateStr: string) => {
+  if (!dateStr) return 'Just now';
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins} mins ago`;
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  return `${diffDays} days ago`;
+};
+
 export function CitizenPortal() {
   const [lang, setLang] = useState<'en' | 'zh' | 'ms' | 'ta'>('en');
   const [complaints, setComplaints] = useState<CitizenComplaint[]>([]);
@@ -135,6 +168,9 @@ export function CitizenPortal() {
   const [selectedCompId, setSelectedCompId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // User role state
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   // Feedback/Verification fields
   const [citizenRating, setCitizenRating] = useState<number>(5);
@@ -319,14 +355,24 @@ export function CitizenPortal() {
   const handleVerify = (id: string) => {
     if (isConfirmed) {
       verifyComplaint(id, citizenRating, citizenFeedback || 'Verified by citizen. Excellent smoothing work.');
+      // Sets status to Closed on confirm
+      updateDocument(getDocRef('complaints', id), { status: 'Closed', citizenVerified: true });
+      updateDocument(getDocRef('reports', `rep-from-${id}`), { resolved: true, status: 'Resolved' });
       if (followUpImageUrl) {
         updateDocument(getDocRef('complaints', id), { followUpImageUrl });
         updateDocument(getDocRef('reports', `rep-from-${id}`), { afterImageUrl: followUpImageUrl });
       }
-      setSuccessMsg('Citizen verification submitted successfully! Paving certified.');
+      addDocument(getCollectionRef('notifications'), {
+        title: 'Repair Verified & Closed',
+        message: `You verified and closed the complaint for "${selectedComplaint.title}".`,
+        timestamp: new Date().toISOString(),
+        read: false,
+        citizenId: 'citizen_demo'
+      });
+      setSuccessMsg('Citizen verification submitted successfully! Paving certified & Closed.');
     } else {
       updateDocument(getDocRef('complaints', id), { 
-        status: 'Repair In Progress',
+        status: 'Repairing',
         citizenVerified: false,
         citizenRejected: true,
         citizenFeedback: citizenFeedback || 'Repair rejected by citizen. Pavement is still uneven.'
@@ -352,16 +398,106 @@ export function CitizenPortal() {
     setTimeout(() => setSuccessMsg(null), 4000);
   };
 
+  // Admin Actions
+  const handleUpdatePriority = (compId: string, newPriority: 'Critical' | 'High' | 'Medium' | 'Low') => {
+    const weights = { 'Critical': 95, 'High': 80, 'Medium': 55, 'Low': 30 };
+    const score = weights[newPriority];
+    updateDocument(getDocRef('complaints', compId), { priority: newPriority, priorityScore: score });
+    updateDocument(getDocRef('reports', `rep-from-${compId}`), { 
+      severity: (newPriority === 'Critical' ? 'Critical' : newPriority === 'High' ? 'Active' : newPriority === 'Medium' ? 'Pending' : 'Scheduled'),
+      priorityScore: score
+    });
+    setSuccessMsg(`Incident priority updated to ${newPriority}.`);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleAddNotes = (compId: string, noteText: string) => {
+    if (!noteText.trim()) return;
+    const complaint = complaints.find(c => c.id === compId);
+    if (!complaint) return;
+
+    const currentNotes = (complaint as any).notes || '';
+    const newNotes = currentNotes ? `${currentNotes}\n[Admin Note]: ${noteText}` : `[Admin Note]: ${noteText}`;
+    
+    updateDocument(getDocRef('complaints', compId), { notes: newNotes });
+    updateDocument(getDocRef('reports', `rep-from-${compId}`), { repairNotes: newNotes });
+    setSuccessMsg("Admin note appended successfully.");
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleAdminStatusChange = (compId: string, status: CitizenComplaint['status'], teamName?: string) => {
+    const complaint = complaints.find(c => c.id === compId);
+    if (!complaint) return;
+
+    const updates: any = { status };
+    if (teamName) updates.assignedTeam = teamName;
+    if (status === 'Resolved') updates.resolvedAt = new Date().toISOString();
+
+    updateDocument(getDocRef('complaints', compId), updates);
+
+    // Sync to report
+    const reportId = `rep-from-${compId}`;
+    let reportStatus: any = 'Detected';
+    if (status === 'Resolved') reportStatus = 'Resolved';
+    else if (status === 'Repairing' || status === 'Repair In Progress') reportStatus = 'Repairing';
+    else if (status === 'Assigned') reportStatus = 'Assigned';
+    else if (status === 'Verified') reportStatus = 'Verified';
+    else if (status === 'Submitted') reportStatus = 'Detected';
+    else if (status === 'Closed') reportStatus = 'Resolved';
+
+    const reportUpdates: any = { status: reportStatus };
+    if (teamName) reportUpdates.assignedTeam = teamName;
+    if (status === 'Closed') reportUpdates.resolved = true;
+    if (status === 'Resolved') {
+      const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      reportUpdates.resolved = true;
+      reportUpdates.actualCompletionDate = todayStr;
+      reportUpdates.repairDate = todayStr;
+    }
+
+    updateDocument(getDocRef('reports', reportId), reportUpdates);
+
+    // Generate notifications
+    let notifTitle = '';
+    let notifMessage = '';
+    if (status === 'Verified') {
+      notifTitle = 'Complaint Verified';
+      notifMessage = `AI and municipal engineers have verified your complaint "${complaint.title}".`;
+    } else if (status === 'Assigned') {
+      notifTitle = 'Team Assigned';
+      notifMessage = `Municipal team has been assigned to fix "${complaint.title}".`;
+    } else if (status === 'Repairing') {
+      notifTitle = 'Repair Started';
+      notifMessage = `Crew has arrived on-site. Repairs are now active for "${complaint.title}".`;
+    } else if (status === 'Resolved') {
+      notifTitle = 'Repair Completed';
+      notifMessage = `Repairs have been completed for "${complaint.title}". Please verify the work.`;
+    } else if (status === 'Closed') {
+      notifTitle = 'Complaint Closed';
+      notifMessage = `Resolution has been verified by citizen. The incident is now officially closed.`;
+    }
+
+    if (notifTitle) {
+      addDocument(getCollectionRef('notifications'), {
+        title: notifTitle,
+        message: notifMessage,
+        timestamp: new Date().toISOString(),
+        read: false,
+        citizenId: 'citizen_demo'
+      });
+    }
+  };
+
   const selectedComplaint = complaints.find(c => c.id === selectedCompId) || complaints[0];
 
   // Resolution stats
   const totalFiled = complaints.length;
   const verifiedCount = complaints.filter(c => c.status !== 'Submitted').length;
-  const resolvedCount = complaints.filter(c => c.status === 'Resolved').length;
-  const activeCount = complaints.filter(c => c.status !== 'Resolved').length;
+  const resolvedCount = complaints.filter(c => c.status === 'Resolved' || c.status === 'Closed').length;
+  const activeCount = complaints.filter(c => c.status !== 'Closed').length;
 
   let avgTime = '35m';
-  const resolvedList = complaints.filter(c => c.status === 'Resolved');
+  const resolvedList = complaints.filter(c => c.status === 'Resolved' || c.status === 'Closed');
   if (resolvedList.length > 0) {
     let totalMs = 0;
     let count = 0;
@@ -380,13 +516,15 @@ export function CitizenPortal() {
   }
 
   const getWorkflowStepClass = (currentStatus: string, step: string) => {
-    const order = ['Submitted', 'Verified', 'Assigned', 'Repair In Progress', 'Resolved'];
-    const currentIndex = order.indexOf(currentStatus);
+    const order = ['Submitted', 'Verified', 'Assigned', 'Repairing', 'Resolved', 'Closed'];
+    const currentNorm = currentStatus === 'Repair In Progress' ? 'Repairing' : currentStatus;
+    const currentIndex = order.indexOf(currentNorm);
     const stepIndex = order.indexOf(step);
 
     if (currentIndex >= stepIndex) {
+      if (currentStatus === 'Closed') return 'bg-slate-700 border-slate-800 text-white';
       if (currentStatus === 'Resolved') return 'bg-green-600 border-green-500 text-white';
-      if (step === 'Repair In Progress') return 'bg-orange-500 border-orange-400 text-white';
+      if (step === 'Repairing') return 'bg-purple-600 border-purple-500 text-white';
       return 'bg-primary border-primary text-white';
     }
     return 'bg-slate-100 border-slate-200 text-slate-400';
@@ -403,7 +541,7 @@ export function CitizenPortal() {
     }
 
     if (statusFilter !== 'All') {
-      if (statusFilter === 'Repair In Progress' && comp.status === 'Repair In Progress') return true;
+      if (statusFilter === 'Repairing' && (comp.status === 'Repairing' || comp.status === 'Repair In Progress')) return true;
       if (comp.status !== statusFilter) return false;
     }
 
@@ -428,14 +566,36 @@ export function CitizenPortal() {
 
   return (
     <div className="p-8 max-w-[1440px] mx-auto pb-32 animate-fade-in-up">
-      {/* Header Banner with Language Select & Notifications */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      {/* Header Banner with Language Select, Role Select & Notifications */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 border-b border-border-subtle/50 pb-6">
         <div>
           <h2 className="text-3xl font-bold text-primary tracking-tight">{t.title}</h2>
           <p className="text-text-secondary mt-1">{t.subtitle}</p>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Role Switcher Toggle */}
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-border-subtle shadow-inner h-10 select-none">
+            <button
+              type="button"
+              onClick={() => setIsAdmin(false)}
+              className={`px-4.5 py-1 rounded-md text-xs font-bold transition-all ${
+                !isAdmin ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-primary'
+              }`}
+            >
+              Citizen View
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAdmin(true)}
+              className={`px-4.5 py-1 rounded-md text-xs font-bold transition-all ${
+                isAdmin ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-primary'
+              }`}
+            >
+              Municipal Operations (Admin)
+            </button>
+          </div>
+
           {/* Notifications Bell Dropdown */}
           <div className="relative">
             <button
@@ -513,8 +673,8 @@ export function CitizenPortal() {
       </div>
 
       {successMsg && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 text-green-700 text-xs font-bold rounded-lg flex items-center gap-2 animate-fade-in-up">
-          <CheckCircle2 className="w-4 h-4 text-green-600 animate-bounce" />
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 text-green-700 text-xs font-bold rounded-lg flex items-center gap-2 animate-fade-in-up animate-pulse">
+          <CheckCircle2 className="w-4 h-4 text-green-600" />
           <span>{successMsg}</span>
         </div>
       )}
@@ -522,118 +682,251 @@ export function CitizenPortal() {
       {/* Grid split */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* Left Side: Submission form */}
+        {/* Left Side: Citizen form OR Admin active incident tracker cards */}
         <section className="lg:col-span-6 bg-white rounded-xl border border-border-subtle shadow-sm p-6">
-          <h3 className="font-bold text-sm text-primary flex items-center gap-2 border-b border-border-subtle/50 pb-3 mb-6">
-            <ListChecks className="w-4.5 h-4.5" /> {t.formHeader}
-          </h3>
+          {!isAdmin ? (
+            <>
+              {/* CITIZEN SUBMISSION FORM */}
+              <h3 className="font-bold text-sm text-primary flex items-center gap-2 border-b border-border-subtle/50 pb-3 mb-6">
+                <ListChecks className="w-4.5 h-4.5" /> {t.formHeader}
+              </h3>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1.5">{t.complaintTitle}</label>
-              <input
-                type="text"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="E.g. Large sinkhole forming"
-                className="w-full px-3 py-2 bg-surface border border-border-subtle rounded-lg text-xs text-primary focus:ring-1 focus:ring-primary outline-none font-semibold"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1.5">{t.description}</label>
-              <textarea
-                required
-                rows={4}
-                value={desc}
-                onChange={(e) => setDesc(e.target.value)}
-                placeholder="Describe details: width, depth, immediate danger..."
-                className="w-full px-3 py-2 bg-surface border border-border-subtle rounded-lg text-xs text-primary focus:ring-1 focus:ring-primary outline-none font-semibold"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1.5">{t.location}</label>
-              <input
-                type="text"
-                required
-                value={locName}
-                onChange={(e) => setLocName(e.target.value)}
-                placeholder="E.g. Orchard Road near exit B"
-                className="w-full px-3 py-2 bg-surface border border-border-subtle rounded-lg text-xs text-primary focus:ring-1 focus:ring-primary outline-none font-semibold"
-              />
-            </div>
-
-            {/* Interactive Drag & Drop / Click Image Upload */}
-            <div 
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFile(e.dataTransfer.files?.[0]); }}
-              className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer transition-all ${
-                isDragging ? 'border-primary bg-slate-100/50' : 'border-border-subtle bg-slate-50 hover:bg-slate-100/50'
-              }`}
-            >
-              <input 
-                type="file"
-                ref={fileInputRef}
-                accept=".png,.jpg,.jpeg"
-                onChange={(e) => handleFile(e.target.files?.[0])}
-                style={{ display: 'none' }}
-              />
-
-              {uploadedImageUrl ? (
-                <div className="relative group w-full flex flex-col items-center justify-center">
-                  <img 
-                    src={uploadedImageUrl} 
-                    alt="Pothole preview" 
-                    className="max-h-36 rounded-lg object-cover border border-border-subtle shadow-md"
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1.5">{t.complaintTitle}</label>
+                  <input
+                    type="text"
+                    required
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="E.g. Large sinkhole forming"
+                    className="w-full px-3 py-2 bg-surface border border-border-subtle rounded-lg text-xs text-primary focus:ring-1 focus:ring-primary outline-none font-semibold"
                   />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
-                    <button 
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setUploadedImageUrl(''); }}
-                      className="p-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 cursor-pointer shadow-lg"
-                      title="Remove image"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <span className="text-[10px] text-text-secondary mt-2 font-semibold">Image verified and compressed</span>
                 </div>
-              ) : uploadingFile ? (
-                <div className="w-full flex flex-col items-center py-2">
-                  <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-primary animate-spin mb-2"></div>
-                  <span className="text-xs font-bold text-primary">Uploading Visual Evidence... {Math.round(uploadProgress)}%</span>
-                  <div className="w-48 bg-slate-200 h-1.5 rounded-full overflow-hidden mt-2">
-                    <div className="bg-primary h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <UploadCloud className="w-8 h-8 text-text-secondary mb-2" />
-                  <span className="text-xs font-bold text-primary">{t.upload}</span>
-                  <span className="text-[10px] text-text-secondary mt-1">PNG, JPG or JPEG up to 10MB</span>
-                </>
-              )}
-            </div>
 
-            {uploadError && (
-              <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold rounded-lg flex items-center gap-2">
-                <AlertCircle className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
-                <span>{uploadError}</span>
+                <div>
+                  <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1.5">{t.description}</label>
+                  <textarea
+                    required
+                    rows={4}
+                    value={desc}
+                    onChange={(e) => setDesc(e.target.value)}
+                    placeholder="Describe details: width, depth, immediate danger..."
+                    className="w-full px-3 py-2 bg-surface border border-border-subtle rounded-lg text-xs text-primary focus:ring-1 focus:ring-primary outline-none font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1.5">{t.location}</label>
+                  <input
+                    type="text"
+                    required
+                    value={locName}
+                    onChange={(e) => setLocName(e.target.value)}
+                    placeholder="E.g. Orchard Road near exit B"
+                    className="w-full px-3 py-2 bg-surface border border-border-subtle rounded-lg text-xs text-primary focus:ring-1 focus:ring-primary outline-none font-semibold"
+                  />
+                </div>
+
+                {/* Interactive Drag & Drop / Click Image Upload */}
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFile(e.dataTransfer.files?.[0]); }}
+                  className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                    isDragging ? 'border-primary bg-slate-100/50' : 'border-border-subtle bg-slate-50 hover:bg-slate-100/50'
+                  }`}
+                >
+                  <input 
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".png,.jpg,.jpeg"
+                    onChange={(e) => handleFile(e.target.files?.[0])}
+                    style={{ display: 'none' }}
+                  />
+
+                  {uploadedImageUrl ? (
+                    <div className="relative group w-full flex flex-col items-center justify-center">
+                      <img 
+                        src={uploadedImageUrl} 
+                        alt="Pothole preview" 
+                        className="max-h-36 rounded-lg object-cover border border-border-subtle shadow-md"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
+                        <button 
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setUploadedImageUrl(''); }}
+                          className="p-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 cursor-pointer shadow-lg"
+                          title="Remove image"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-text-secondary mt-2 font-semibold">Image verified and compressed</span>
+                    </div>
+                  ) : uploadingFile ? (
+                    <div className="w-full flex flex-col items-center py-2">
+                      <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-primary animate-spin mb-2"></div>
+                      <span className="text-xs font-bold text-primary">Uploading Visual Evidence... {Math.round(uploadProgress)}%</span>
+                      <div className="w-48 bg-slate-200 h-1.5 rounded-full overflow-hidden mt-2">
+                        <div className="bg-primary h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <UploadCloud className="w-8 h-8 text-text-secondary mb-2" />
+                      <span className="text-xs font-bold text-primary">{t.upload}</span>
+                      <span className="text-[10px] text-text-secondary mt-1">PNG, JPG or JPEG up to 10MB</span>
+                    </>
+                  )}
+                </div>
+
+                {uploadError && (
+                  <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold rounded-lg flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
+                    <span>{uploadError}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !!uploadingFile}
+                  className="w-full bg-primary hover:bg-neutral-800 text-white font-bold py-3 px-4 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm font-semibold"
+                >
+                  <Navigation className="w-3.5 h-3.5 rotate-45" /> {isSubmitting ? 'Filing Report...' : t.submit}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              {/* ADMIN MODE: ACTIVE INCIDENT TRACKER MODULE */}
+              <h3 className="font-bold text-sm text-primary flex items-center justify-between border-b border-border-subtle/50 pb-3 mb-6">
+                <span className="flex items-center gap-2">
+                  <Clock className="w-4.5 h-4.5 text-primary" /> Operations Center - Active Incidents
+                </span>
+                <span className="bg-red-50 text-red-600 border border-red-200 text-[8px] font-black px-2 py-0.5 rounded-full animate-pulse">
+                  {complaints.filter(c => c.status !== 'Closed').length} Active
+                </span>
+              </h3>
+
+              {/* Active Incident Tracker Cards */}
+              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1 custom-scrollbar">
+                {sortedComplaints.length === 0 ? (
+                  <div className="text-[10px] text-text-secondary text-center py-12 font-semibold bg-slate-50 rounded-lg border border-dashed border-border-subtle">
+                    No active dispatches on grid.
+                  </div>
+                ) : (
+                  sortedComplaints.map(comp => {
+                    const badge = getStatusBadge(comp.status);
+                    return (
+                      <div 
+                        key={comp.id} 
+                        className={`p-4 rounded-xl border transition-all ${
+                          selectedCompId === comp.id ? 'bg-slate-50 border-primary shadow-md scale-[1.01]' : 'bg-white border-border-subtle hover:bg-slate-50/50'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-2.5">
+                          <div className="min-w-0 flex-1 pr-2">
+                            <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest block">{comp.id}</span>
+                            <h4 className="font-bold text-xs text-primary mt-0.5 leading-snug truncate">{comp.title}</h4>
+                            <span className="text-[9px] text-text-secondary block mt-0.5 truncate">📍 {comp.locationName || comp.location}</span>
+                          </div>
+                          <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border shrink-0 ${badge.color}`}>
+                            {badge.icon} {badge.text}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-b border-border-subtle/50 py-2.5 my-2.5 text-[9px] font-semibold text-text-secondary">
+                          <div>
+                            <span className="text-[8px] block font-medium opacity-70">Severity & Score:</span>
+                            <span className="text-primary font-bold">
+                              {comp.priority || 'Medium'} ({comp.priorityScore || 50}/100)
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] block font-medium opacity-70">Assigned Team:</span>
+                            <span className="text-primary font-bold">{comp.assignedTeam || 'None Assigned'}</span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] block font-medium opacity-70">Time Since Reported:</span>
+                            <span className="text-primary font-bold">{getTimeSince(comp.timestamp || comp.createdAt)}</span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] block font-medium opacity-70">Est. Completion:</span>
+                            <span className="text-primary font-bold">
+                              {new Date(new Date(comp.timestamp || comp.createdAt).getTime() + (comp.priority === 'Critical' ? 1 : comp.priority === 'High' ? 3 : 7) * 24 * 60 * 60 * 1000).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Admin Action Buttons */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCompId(comp.id)}
+                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-text-secondary hover:text-primary rounded text-[9px] font-bold cursor-pointer transition-colors"
+                          >
+                            View Details
+                          </button>
+
+                          {comp.status === 'Submitted' && (
+                            <button
+                              type="button"
+                              onClick={() => handleAdminStatusChange(comp.id, 'Verified')}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
+                            >
+                              Verify Incident
+                            </button>
+                          )}
+
+                          {comp.status === 'Verified' && (
+                            <button
+                              type="button"
+                              onClick={() => handleAdminStatusChange(comp.id, 'Assigned', 'Team Gamma (Rapid Response)')}
+                              className="px-2.5 py-1.5 bg-safety-yellow text-primary hover:opacity-90 rounded text-[9px] font-black cursor-pointer transition-colors ml-auto shadow-sm"
+                            >
+                              Assign Team
+                            </button>
+                          )}
+
+                          {comp.status === 'Assigned' && (
+                            <button
+                              type="button"
+                              onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
+                              className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
+                            >
+                              Start Repair
+                            </button>
+                          )}
+
+                          {(comp.status === 'Repairing' || comp.status === 'Repair In Progress') && (
+                            <button
+                              type="button"
+                              onClick={() => handleAdminStatusChange(comp.id, 'Resolved')}
+                              className="px-2.5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
+                            >
+                              Resolve
+                            </button>
+                          )}
+
+                          {(comp.status === 'Resolved' || comp.status === 'Closed') && (
+                            <button
+                              type="button"
+                              onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
+                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
+                            >
+                              Reopen
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={isSubmitting || !!uploadingFile}
-              className="w-full bg-primary hover:bg-neutral-800 text-white font-bold py-3 px-4 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm font-semibold"
-            >
-              <Navigation className="w-3.5 h-3.5 rotate-45" /> {isSubmitting ? 'Filing Report...' : t.submit}
-            </button>
-          </form>
+            </>
+          )}
         </section>
 
         {/* Right Side: Resolution Stats & Workflow Tracker */}
@@ -671,8 +964,9 @@ export function CitizenPortal() {
             <div className="bg-white p-6 rounded-xl border border-border-subtle shadow-sm space-y-5">
               <div className="border-b border-border-subtle/50 pb-3 flex justify-between items-start gap-4">
                 <div>
-                  <span className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Active Incident Tracker</span>
+                  <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest">Incident Detailed Tracking</span>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="text-[9px] font-bold text-text-secondary bg-slate-100 px-1.5 py-0.5 rounded border">{selectedComplaint.id}</span>
                     <h4 className="font-bold text-sm text-primary leading-snug">{selectedComplaint.title}</h4>
                     <span className={`text-[8px] font-black px-1.5 py-0.2 rounded-full ${
                       selectedComplaint.priority === 'Critical' ? 'bg-red-100 text-red-700' :
@@ -694,11 +988,11 @@ export function CitizenPortal() {
                 )}
               </div>
 
-              {/* Progress Stepper Timeline */}
+              {/* Progress Stepper Timeline - 6 Stages */}
               <div className="relative pl-6 space-y-6">
                 <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-slate-200"></div>
 
-                <div className="relative flex gap-3.5 items-start animate-fade-in-up">
+                <div className="relative flex gap-3.5 items-start">
                   <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Submitted')}`}>
                     ✓
                   </div>
@@ -710,7 +1004,7 @@ export function CitizenPortal() {
 
                 <div className="relative flex gap-3.5 items-start">
                   <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Verified')}`}>
-                    {['Verified', 'Assigned', 'Repair In Progress', 'Resolved'].includes(selectedComplaint.status) ? '✓' : '2'}
+                    {['Verified', 'Assigned', 'Repairing', 'Repair In Progress', 'Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '2'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 2: Verified</h5>
@@ -720,17 +1014,17 @@ export function CitizenPortal() {
 
                 <div className="relative flex gap-3.5 items-start">
                   <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Assigned')}`}>
-                    {['Assigned', 'Repair In Progress', 'Resolved'].includes(selectedComplaint.status) ? '✓' : '3'}
+                    {['Assigned', 'Repairing', 'Repair In Progress', 'Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '3'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 3: Assigned</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">Assigned to Sector Maintenance Crew Team Gamma.</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5">Assigned to Sector Maintenance Crew: <span className="text-blue-600 font-bold">{selectedComplaint.assignedTeam || 'Team Gamma (Rapid Response)'}</span></p>
                   </div>
                 </div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Repair In Progress')}`}>
-                    {['Repair In Progress', 'Resolved'].includes(selectedComplaint.status) ? '✓' : '4'}
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Repairing')}`}>
+                    {['Repairing', 'Repair In Progress', 'Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '4'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 4: Repair In Progress</h5>
@@ -740,17 +1034,27 @@ export function CitizenPortal() {
 
                 <div className="relative flex gap-3.5 items-start">
                   <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Resolved')}`}>
-                    {selectedComplaint.status === 'Resolved' ? '✓' : '5'}
+                    {['Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '5'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 5: Resolved</h5>
                     <p className="text-[10px] text-text-secondary mt-0.5">Safety clearance verified. Post-patch telemetry complete.</p>
                   </div>
                 </div>
+
+                <div className="relative flex gap-3.5 items-start">
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Closed')}`}>
+                    {selectedComplaint.status === 'Closed' ? '✓' : '6'}
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-bold text-primary">Stage 6: Closed</h5>
+                    <p className="text-[10px] text-text-secondary mt-0.5">Resolution verified by citizen. Case officially closed.</p>
+                  </div>
+                </div>
               </div>
 
               {/* CITIZEN VERIFICATION SYSTEM PANEL */}
-              {selectedComplaint.status === 'Resolved' && (
+              {selectedComplaint.status === 'Resolved' && !isAdmin && (
                 <div className="mt-6 pt-6 border-t border-border-subtle/80 space-y-4 animate-fade-in-up">
                   <h4 className="font-bold text-xs text-primary flex items-center gap-1.5 uppercase tracking-wider">
                     <MessageSquare className="w-4 h-4 text-purple-600" /> Citizen Verification System
@@ -775,17 +1079,6 @@ export function CitizenPortal() {
                           />
                         </div>
                       )}
-                      
-                      <div className="grid grid-cols-2 gap-4 border-t border-green-200/50 pt-2.5 mt-2 font-bold text-[10px] text-center">
-                        <div>
-                          <span className="text-text-secondary block font-semibold">Satisfaction:</span>
-                          <span className="text-primary text-xs">{selectedComplaint.satisfactionScore}%</span>
-                        </div>
-                        <div>
-                          <span className="text-text-secondary block font-semibold">Resolution Quality Score:</span>
-                          <span className="text-primary text-xs">{selectedComplaint.resolutionQualityScore}%</span>
-                        </div>
-                      </div>
                     </div>
                   ) : (
                     <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-border-subtle">
@@ -904,50 +1197,73 @@ export function CitizenPortal() {
                 </div>
               )}
 
-              {/* Municipal Dispatch Simulation Controls */}
-              <div className="mt-4 pt-4 border-t border-border-subtle/50 space-y-2">
-                <span className="text-[8px] font-bold text-text-secondary uppercase tracking-wider block">Municipal Dispatch Simulator</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => updateComplaintStatus(selectedComplaint.id, 'Verified')}
-                    disabled={selectedComplaint.status === 'Verified'}
-                    className="px-2 py-1 bg-slate-900 hover:bg-black disabled:bg-slate-100 disabled:text-slate-400 text-white rounded text-[8px] font-bold cursor-pointer transition-colors"
-                  >
-                    Verify (AI)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateComplaintStatus(selectedComplaint.id, 'Assigned')}
-                    disabled={selectedComplaint.status === 'Assigned'}
-                    className="px-2 py-1 bg-safety-yellow text-primary hover:opacity-90 disabled:bg-slate-100 disabled:text-slate-400 rounded text-[8px] font-black cursor-pointer transition-colors"
-                  >
-                    Assign Crew
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateComplaintStatus(selectedComplaint.id, 'Repair In Progress')}
-                    disabled={selectedComplaint.status === 'Repair In Progress'}
-                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-100 disabled:text-slate-400 text-white rounded text-[8px] font-bold cursor-pointer transition-colors"
-                  >
-                    Start Repair
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateComplaintStatus(selectedComplaint.id, 'Resolved')}
-                    disabled={selectedComplaint.status === 'Resolved'}
-                    className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:bg-slate-100 disabled:text-slate-400 text-white rounded text-[8px] font-bold cursor-pointer transition-colors"
-                  >
-                    Resolve Repair
-                  </button>
+              {/* Admin Additional Controls Panel */}
+              {isAdmin && (
+                <div className="mt-6 pt-6 border-t border-border-subtle/80 space-y-4 animate-fade-in-up">
+                  <h5 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider block">Admin Dispatch Controls</h5>
+                  
+                  {/* Priority update */}
+                  <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-border-subtle">
+                    <span className="text-[9px] font-bold text-text-secondary uppercase">Update Priority:</span>
+                    <div className="flex gap-1.5">
+                      {(['Low', 'Medium', 'High', 'Critical'] as const).map(prio => (
+                        <button
+                          key={prio}
+                          type="button"
+                          onClick={() => handleUpdatePriority(selectedComplaint.id, prio)}
+                          className={`px-2 py-0.5 rounded text-[8px] font-bold cursor-pointer transition-colors ${
+                            selectedComplaint.priority === prio
+                              ? 'bg-primary text-white'
+                              : 'bg-white hover:bg-slate-100 text-text-secondary border border-border-subtle'
+                          }`}
+                        >
+                          {prio}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notes input */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[8px] font-bold text-text-secondary uppercase mb-1">Add Operational/Dispatch Notes</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        id="admin-note-input"
+                        placeholder="E.g. Dispatched Team Gamma for paving works..." 
+                        className="flex-1 text-[10px] px-2.5 py-1.5 bg-white border border-border-subtle rounded-lg outline-none font-semibold"
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          const val = (document.getElementById('admin-note-input') as HTMLInputElement)?.value;
+                          if (val) {
+                            handleAddNotes(selectedComplaint.id, val);
+                            (document.getElementById('admin-note-input') as HTMLInputElement).value = '';
+                          }
+                        }}
+                        className="bg-primary hover:bg-neutral-800 text-white font-bold px-3 py-1.5 rounded-lg text-[9px] transition-colors cursor-pointer"
+                      >
+                        Add Note
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Historical logs for this incident */}
+                  {selectedComplaint.notes && (
+                    <div className="bg-slate-50 p-3 rounded-lg border border-border-subtle text-[9px] space-y-1">
+                      <span className="font-bold text-text-secondary uppercase">Incident Log History:</span>
+                      <pre className="whitespace-pre-wrap font-sans font-semibold text-primary">{selectedComplaint.notes}</pre>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
 
             </div>
           )}
 
-          {/* User complaints history list */}
-          <div className="space-y-3">
+          {/* User complaints history list (Submissions Feed) */}
+          <div className="space-y-3 mt-8 pt-6 border-t border-border-subtle/50">
             <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-widest pl-1">Recent Citizen Submissions</h3>
             
             {/* Search, Filter & Sort Controls */}
@@ -968,8 +1284,9 @@ export function CitizenPortal() {
                 <option value="Submitted">Submitted</option>
                 <option value="Verified">Verified</option>
                 <option value="Assigned">Assigned</option>
-                <option value="Repair In Progress">Repairing</option>
+                <option value="Repairing">Repairing</option>
                 <option value="Resolved">Resolved</option>
+                <option value="Closed">Closed</option>
               </select>
               <select
                 value={sortBy}
