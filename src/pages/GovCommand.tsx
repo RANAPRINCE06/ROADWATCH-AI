@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShieldCheck, BarChart3, TrendingUp, DollarSign, Users, Award, ShieldAlert, PieChart } from 'lucide-react';
 import { getReports, getSensors, getComplaints } from '../utils/storage';
 
@@ -12,32 +12,154 @@ interface TeamPerformance {
 }
 
 export function GovCommand() {
-  const [reports] = useState(() => getReports());
-  const [sensors] = useState(() => getSensors());
-  const [complaints] = useState(() => getComplaints());
+  const [reports, setReports] = useState(() => getReports());
+  const [sensors, setSensors] = useState(() => getSensors());
+  const [complaints, setComplaints] = useState(() => getComplaints());
+
+  useEffect(() => {
+    const handleReportsSync = () => setReports(getReports());
+    const handleSensorsSync = () => setSensors(getSensors());
+    const handleComplaintsSync = () => setComplaints(getComplaints());
+
+    window.addEventListener('roadwatch-reports-updated', handleReportsSync);
+    window.addEventListener('roadwatch-sensors-updated', handleSensorsSync);
+    window.addEventListener('roadwatch-complaints-updated', handleComplaintsSync);
+
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleReportsSync);
+      window.removeEventListener('roadwatch-sensors-updated', handleSensorsSync);
+      window.removeEventListener('roadwatch-complaints-updated', handleComplaintsSync);
+    };
+  }, []);
 
   const activeReportsCount = reports.filter(r => !r.resolved).length;
   const resolvedCount = reports.filter(r => r.resolved).length;
-  
+
+  // Road Health Index dynamic computation
+  const calculateRoadHealthIndex = () => {
+    if (sensors.length === 0) return 82.5;
+    const sum = sensors.reduce((acc, s) => acc + s.roadHealthScore, 0);
+    return parseFloat((sum / sensors.length).toFixed(1));
+  };
+  const roadHealthIndex = calculateRoadHealthIndex();
+
+  // Dynamic budget calculation based on reports
+  let drainageSpent = 15000;
+  let resurfacingSpent = 12000;
+  let signalsSpent = 8000;
+
+  reports.forEach(r => {
+    const titleLower = r.title.toLowerCase();
+    const isDrainage = titleLower.includes('waterlogging') || titleLower.includes('flood') || r.icon === 'droplets';
+    const isResurfacing = titleLower.includes('pothole') || titleLower.includes('crack') || r.icon === 'alert' || r.icon === 'hardhat';
+
+    const cost = r.resolved ? 4500 : 1500;
+
+    if (isDrainage) {
+      drainageSpent += cost;
+    } else if (isResurfacing) {
+      resurfacingSpent += cost;
+    } else {
+      signalsSpent += cost;
+    }
+  });
+
+  const spentBudget = drainageSpent + resurfacingSpent + signalsSpent;
   const totalBudget = 100000;
-  const spentBudget = 42500;
   const remainingBudget = totalBudget - spentBudget;
   const utilizationPercentage = (spentBudget / totalBudget) * 100;
 
-  // District scores & metrics
-  const districtsData = [
-    { name: 'Orchard Sector', score: 85, active: 2, resolved: 6 },
-    { name: 'Marina Bay', score: 92, active: 1, resolved: 8 },
-    { name: 'Downtown Core', score: 90, active: 1, resolved: 5 },
-    { name: 'Geylang East', score: 76, active: 2, resolved: 4 }
+  const drainagePct = spentBudget > 0 ? (drainageSpent / spentBudget) * 100 : 0;
+  const resurfacingPct = spentBudget > 0 ? (resurfacingSpent / spentBudget) * 100 : 0;
+  const signalsPct = spentBudget > 0 ? (signalsSpent / spentBudget) * 100 : 0;
+
+  const drainageOffset = 220 * (1 - drainagePct / 100);
+  const resurfacingOffset = 220 * (1 - resurfacingPct / 100);
+  const signalsOffset = 220 * (1 - signalsPct / 100);
+
+  const resurfacingRot = (drainagePct / 100) * 360;
+  const signalsRot = ((drainagePct + resurfacingPct) / 100) * 360;
+
+  // District scores & metrics computed dynamically
+  const getDistrict = (location: string): string => {
+    const loc = location.toLowerCase();
+    if (loc.includes('orchard')) return 'Orchard Sector';
+    if (loc.includes('marina') || loc.includes('bayfront')) return 'Marina Bay';
+    if (loc.includes('geylang') || loc.includes('jalan besar')) return 'Geylang East';
+    return 'Downtown Core';
+  };
+
+  const districtsMap: Record<string, { active: number; resolved: number }> = {
+    'Orchard Sector': { active: 0, resolved: 0 },
+    'Marina Bay': { active: 0, resolved: 0 },
+    'Downtown Core': { active: 0, resolved: 0 },
+    'Geylang East': { active: 0, resolved: 0 }
+  };
+
+  reports.forEach(r => {
+    const dist = getDistrict(r.location);
+    if (r.resolved) {
+      districtsMap[dist].resolved++;
+    } else {
+      districtsMap[dist].active++;
+    }
+  });
+
+  const districtsData = Object.keys(districtsMap).map(name => {
+    const { active, resolved } = districtsMap[name];
+    let score = 95;
+    score -= active * 5;
+    score += resolved * 1.5;
+    score = Math.round(Math.min(100, Math.max(50, score)));
+    return { name, score, active, resolved };
+  });
+
+  // Teams performance computed dynamically
+  const teamsList = [
+    { name: 'Orchard Resurfacing', specialization: 'Asphalt Resurfacing', baseSuccess: 98.4, baseTime: 38 },
+    { name: 'Bishan Pavement Crew', specialization: 'Asphalt Resurfacing', baseSuccess: 96.2, baseTime: 40 },
+    { name: 'City Hall Rapid Unit', specialization: 'Rapid Response', baseSuccess: 99.1, baseTime: 15 },
+    { name: 'Marina Drainage Ops', specialization: 'Drainage Systems', baseSuccess: 95.8, baseTime: 45 },
+    { name: 'Tanjong Signal Patrol', specialization: 'Traffic Signals', baseSuccess: 97.2, baseTime: 30 },
+    { name: 'Geylang Drainage Techs', specialization: 'Drainage Systems', baseSuccess: 94.5, baseTime: 48 },
+    { name: 'Clementi Quick Squad', specialization: 'Rapid Response', baseSuccess: 98.0, baseTime: 18 },
+    { name: 'Changi Signal Team', specialization: 'Traffic Signals', baseSuccess: 96.5, baseTime: 35 },
+    { name: 'Woodlands Asphalt Crew', specialization: 'Asphalt Resurfacing', baseSuccess: 97.0, baseTime: 42 },
+    { name: 'Jurong Response Team', specialization: 'Rapid Response', baseSuccess: 98.7, baseTime: 16 }
   ];
 
-  const teamData: TeamPerformance[] = [
-    { name: 'Team Alpha', specialization: 'Asphalt Resurfacing', activeDispatches: 2, successRate: 98.4, avgResponseTime: '38 Mins', status: 'Deployed' },
-    { name: 'Team Delta', specialization: 'Drainage Systems', activeDispatches: 1, successRate: 95.8, avgResponseTime: '45 Mins', status: 'Active' },
-    { name: 'Team Gamma', specialization: 'Rapid Response', activeDispatches: 1, successRate: 99.1, avgResponseTime: '15 Mins', status: 'Deployed' },
-    { name: 'Team Epsilon', specialization: 'Traffic Signals', activeDispatches: 0, successRate: 97.2, avgResponseTime: '30 Mins', status: 'Standby' }
-  ];
+  const teamData: TeamPerformance[] = teamsList.map(t => {
+    const teamReports = reports.filter(r => r.assignedTeam && r.assignedTeam.includes(t.name));
+    const activeDispatches = teamReports.filter(r => !r.resolved && (r.status === 'Assigned' || r.status === 'Repairing')).length;
+    const resolvedCount = teamReports.filter(r => r.resolved).length;
+
+    let status: 'Deployed' | 'Standby' | 'Active' = 'Standby';
+    if (activeDispatches > 0) {
+      status = teamReports.some(r => r.status === 'Repairing') ? 'Active' : 'Deployed';
+    }
+
+    const successRate = parseFloat(Math.min(100, t.baseSuccess + (resolvedCount * 0.1)).toFixed(1));
+
+    let avgResponseTime = `${t.baseTime} Mins`;
+    const resolvedTimes = teamReports.filter(r => r.resolved && r.resolutionTime);
+    if (resolvedTimes.length > 0) {
+      let totalMins = 0;
+      resolvedTimes.forEach(r => {
+        const m = r.resolutionTime?.match(/(\d+)/);
+        if (m) totalMins += parseInt(m[1], 10);
+      });
+      avgResponseTime = `${Math.round(totalMins / resolvedTimes.length)} Mins`;
+    }
+
+    return {
+      name: t.name,
+      specialization: t.specialization,
+      activeDispatches,
+      successRate,
+      avgResponseTime,
+      status
+    };
+  });
 
   return (
     <div className="p-8 max-w-[1440px] mx-auto pb-32 animate-fade-in-up">
@@ -48,12 +170,12 @@ export function GovCommand() {
 
       {/* KPI Cards Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        
+
         {/* City Road Health Index */}
         <div className="bg-white p-5 rounded-xl border border-border-subtle shadow-sm flex justify-between items-center">
           <div>
             <span className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Road Health Index</span>
-            <div className="text-3xl font-bold text-primary mt-1">82.5%</div>
+            <div className="text-3xl font-bold text-primary mt-1">{roadHealthIndex}%</div>
             <p className="text-[10px] text-green-600 font-semibold flex items-center gap-1 mt-1">
               <TrendingUp className="w-3.5 h-3.5" /> +4.2% vs last month
             </p>
@@ -101,7 +223,7 @@ export function GovCommand() {
               {teamData.filter(t => t.status !== 'Standby').length} Crews
             </div>
             <p className="text-[10px] text-text-secondary font-semibold mt-1">
-              1 team on standby reserve
+              {teamData.filter(t => t.status === 'Standby').length} team{teamData.filter(t => t.status === 'Standby').length === 1 ? '' : 's'} on standby reserve
             </p>
           </div>
           <div className="w-12 h-12 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-center text-amber-600">
@@ -112,7 +234,7 @@ export function GovCommand() {
 
       {/* Charts split layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-8">
-        
+
         {/* District Performance Comparison chart */}
         <div className="lg:col-span-8 bg-white rounded-xl border border-border-subtle p-6 shadow-sm">
           <h3 className="font-bold text-sm text-primary flex items-center gap-2 border-b border-border-subtle/50 pb-3 mb-6">
@@ -127,7 +249,7 @@ export function GovCommand() {
                   <span className="text-text-secondary">Safety score: <strong className="text-primary">{dist.score}%</strong> • Fixed: {dist.resolved} / Active: {dist.active}</span>
                 </div>
                 <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className={`h-full rounded-full transition-all duration-500 ${
                       dist.score >= 90 ? 'bg-green-500' : dist.score >= 80 ? 'bg-amber-500' : 'bg-red-500'
                     }`}
@@ -149,10 +271,10 @@ export function GovCommand() {
             <svg viewBox="0 0 100 100" className="w-[100px] h-[100px] -rotate-90">
               {/* Donut representation */}
               <circle cx="50" cy="50" r="35" fill="transparent" stroke="#E5E7EB" strokeWidth="12" />
-              {/* Allocation: 58% ($58k spent limit), 25%, 17% */}
-              <circle cx="50" cy="50" r="35" fill="transparent" stroke="#3B82F6" strokeWidth="12" strokeDasharray="220" strokeDashoffset="92.4" />
-              <circle cx="50" cy="50" r="35" fill="transparent" stroke="#FACC15" strokeWidth="12" strokeDasharray="220" strokeDashoffset="147.4" style={{ transform: 'rotate(208.8deg)', transformOrigin: '50px 50px' }} />
-              <circle cx="50" cy="50" r="35" fill="transparent" stroke="#F97316" strokeWidth="12" strokeDasharray="220" strokeDashoffset="182.6" style={{ transform: 'rotate(298.8deg)', transformOrigin: '50px 50px' }} />
+              {/* Allocation: Drainage, Resurfacing, Signals */}
+              <circle cx="50" cy="50" r="35" fill="transparent" stroke="#3B82F6" strokeWidth="12" strokeDasharray="220" strokeDashoffset={drainageOffset} />
+              <circle cx="50" cy="50" r="35" fill="transparent" stroke="#FACC15" strokeWidth="12" strokeDasharray="220" strokeDashoffset={resurfacingOffset} style={{ transform: `rotate(${resurfacingRot}deg)`, transformOrigin: '50px 50px' }} />
+              <circle cx="50" cy="50" r="35" fill="transparent" stroke="#F97316" strokeWidth="12" strokeDasharray="220" strokeDashoffset={signalsOffset} style={{ transform: `rotate(${signalsRot}deg)`, transformOrigin: '50px 50px' }} />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className="text-xs font-black text-primary">${spentBudget.toLocaleString()}</span>
@@ -163,15 +285,15 @@ export function GovCommand() {
           <div className="space-y-1.5 text-[10px] font-bold text-text-secondary">
             <div className="flex justify-between items-center">
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span> Drainage</span>
-              <span className="text-primary">$24,650</span>
+              <span className="text-primary">${drainageSpent.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-safety-yellow rounded-sm"></span> Resurfacing</span>
-              <span className="text-primary">$10,625</span>
+              <span className="text-primary">${resurfacingSpent.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-orange-500 rounded-sm"></span> Signals</span>
-              <span className="text-primary">$7,225</span>
+              <span className="text-primary">${signalsSpent.toLocaleString()}</span>
             </div>
           </div>
         </div>
@@ -205,10 +327,10 @@ export function GovCommand() {
                   <td className="py-3 text-center text-primary font-bold">{team.successRate}%</td>
                   <td className="py-3 text-right">
                     <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                      team.status === 'Deployed' 
-                        ? 'bg-blue-100 text-blue-700' 
-                        : team.status === 'Active' 
-                          ? 'bg-amber-100 text-amber-700 animate-pulse' 
+                      team.status === 'Deployed'
+                        ? 'bg-blue-100 text-blue-700'
+                        : team.status === 'Active'
+                          ? 'bg-amber-100 text-amber-700 animate-pulse'
                           : 'bg-slate-100 text-slate-700'
                     }`}>
                       {team.status}

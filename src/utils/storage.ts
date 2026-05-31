@@ -41,6 +41,9 @@ export interface Report {
   afterImageUrl?: string;
   
   // Repair Tracking System
+  assignedAt?: number;
+  startedAt?: number;
+  completedAt?: number;
   startDate?: string;
   estimatedCompletionDate?: string;
   actualCompletionDate?: string;
@@ -53,6 +56,7 @@ export interface Report {
   citizenFeedback?: string;
   satisfactionScore?: number;
   resolutionQualityScore?: number;
+  resolvedAt?: number;
 }
 
 export interface TelemetryLog {
@@ -254,17 +258,28 @@ export function resolveReport(id: string): void {
   const updatedFields = { 
     resolved: true, 
     status: 'Resolved' as const,
-    assignedTeam: report.assignedTeam || 'Team Gamma (Rapid Response)',
+    assignedTeam: report.assignedTeam || 'City Hall Rapid Unit (Rapid Response)',
     startDate: report.startDate || yesterdayStr,
     estimatedCompletionDate: report.estimatedCompletionDate || todayStr,
     actualCompletionDate: report.actualCompletionDate || todayStr,
     resolutionTime: report.resolutionTime || '42 Mins',
     repairDate: report.repairDate || todayStr,
     afterImageUrl: report.afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80',
-    repairNotes: report.repairNotes || 'Completed paving and smoothing of asphalt layer. Structural load validation complete.'
+    repairNotes: report.repairNotes || 'Completed paving and smoothing of asphalt layer. Structural load validation complete.',
+    assignedAt: report.assignedAt || Date.now(),
+    startedAt: report.startedAt || report.assignedAt || Date.now(),
+    completedAt: Date.now(),
+    resolvedAt: Date.now()
   };
 
   updateDocument(getDocRef('reports', id), updatedFields);
+
+  // Dispatch native browser notification if permission is granted
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('RoadWatch AI Dispatch', {
+      body: `✅ Task Completed: "${report.title}" at ${report.location} has been successfully resolved.`
+    });
+  }
   
   // Sync back to corresponding CitizenComplaint
   if (id.startsWith('rep-from-comp-')) {
@@ -311,6 +326,21 @@ export function verifyRepair(id: string, rating: number, feedback: string): void
 
 export function deleteReport(id: string): void {
   deleteDocument(getDocRef('reports', id));
+}
+
+export async function clearCompletedReports(): Promise<number> {
+  const reports = getReports();
+  const completedReports = reports.filter(r => r.resolved || r.status === 'Resolved');
+
+  if (completedReports.length === 0) return 0;
+
+  const activeReports = reports.filter(r => !(r.resolved || r.status === 'Resolved'));
+  saveReports(activeReports);
+
+  await Promise.all(completedReports.map(report => deleteDocument(getDocRef('reports', report.id))));
+  addLog('Admin Panel', `Deleted ${completedReports.length} completed task history record(s).`, 'WARN');
+
+  return completedReports.length;
 }
 
 export function updateReportStatus(id: string, updates: Partial<Report>): void {
@@ -430,9 +460,11 @@ export interface CitizenComplaint {
   lng: number;
   x: number;
   y: number;
-  status: 'Submitted' | 'Verified' | 'Assigned' | 'Repair In Progress' | 'Resolved';
+  status: 'Submitted' | 'Verified' | 'Assigned' | 'Repair In Progress' | 'Repairing' | 'Resolved' | 'Closed';
   timestamp: string;
   votes: number;
+  priority?: 'Low' | 'Medium' | 'High' | 'Critical';
+  hazardType?: string;
 
   citizenVerified?: boolean;
   citizenRating?: number;
