@@ -9,7 +9,9 @@ import {
 } from '../utils/firebase';
 import { 
   signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword 
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
 
 export function Login() {
@@ -21,6 +23,59 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      let emailAddress = '';
+      let uid = '';
+      let displayName = 'Google User';
+
+      if (realFirebaseActive) {
+        const provider = new GoogleAuthProvider();
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+        emailAddress = user.email || '';
+        uid = user.uid;
+        displayName = user.displayName || emailAddress.split('@')[0];
+      } else {
+        emailAddress = 'citizen.google@gmail.com';
+        uid = `mock-google-uid-${Date.now()}`;
+        displayName = 'Mock Google Citizen';
+      }
+
+      const isGov = emailAddress.toLowerCase().endsWith('.gov');
+      const role = isGov ? 'admin' : 'citizen';
+      const title = isGov ? 'Chief Safety Officer' : 'Resident';
+
+      const userProfile = {
+        email: emailAddress,
+        role,
+        name: displayName,
+        title,
+        avatarUrl: isGov 
+          ? "https://lh3.googleusercontent.com/aida-public/AB6AXuCs1aCxQRSRbOaSzSN0IuWNbUJMmA7-n88Bk5LD4_K6qzpBufNOp4ON04PdaGd-6-uBjiKVCdr2mPAwmYYdV6QXSFIfY9KgQ26ieTh2PaUU8Pq_Pi0uJHs009XW8NUmUcs8A4YU9g8fcs64ACg6MdPUHf8zW3q_OC2LVklLfTeLw_jsslfuu1m2RmnaMjt8csa0tP2wz3yqfGriYWlrRAeUY4NOAVadZ0MhgJPuHurxSxVRqqJ_ENSQdjRfgP8zLYtLy7cRvNbG-l0"
+          : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
+      };
+
+      const completeProfile = { ...userProfile, uid };
+      if (realFirebaseActive) {
+        await setDocument(getDocRef('users', uid), completeProfile);
+      }
+      
+      localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
+      localStorage.setItem('user_role', role);
+      window.dispatchEvent(new Event('roadwatch-user-updated'));
+      
+      navigate(redirect || (role === 'admin' ? '/dashboard' : '/citizen'));
+    } catch (err: any) {
+      console.error('Google Sign-In Error:', err);
+      setErrorMsg(err.message || 'Google Sign-In failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,6 +243,42 @@ export function Login() {
               {isLoading ? 'Verifying Credentials...' : 'Sign In securely'}
             </button>
           </form>
+
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-border-subtle/50"></div>
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-white/80 dark:bg-deep-slate/85 px-3 text-text-secondary font-bold">Or continue with</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={isLoading}
+            className="w-full flex justify-center items-center py-2.5 px-4 border border-border-subtle rounded-lg bg-surface-bright hover:bg-slate-100 dark:hover:bg-slate-800 text-primary font-bold transition-all duration-200 active:scale-95 text-body-md gap-2 cursor-pointer"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <path
+                fill="#EA4335"
+                d="M12 5.04c1.62 0 3.08.56 4.22 1.65l3.15-3.15C17.45 1.84 14.93 1 12 1 7.37 1 3.48 3.67 1.63 7.57l3.78 2.93c.88-2.65 3.37-4.46 6.59-4.46z"
+              />
+              <path
+                fill="#4285F4"
+                d="M23.45 12.3c0-.82-.07-1.6-.21-2.3H12v4.4h6.43c-.28 1.44-1.1 2.67-2.33 3.5l3.6 2.8c2.1-1.94 3.75-5.2 3.75-8.4z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.41 14.5l-3.78 2.93c1.85 3.9 5.74 6.57 10.37 6.57 2.93 0 5.4-.97 7.2-2.63l-3.6-2.8c-.98.66-2.23 1.07-3.6 1.07-3.22 0-5.71-1.81-6.59-4.46L5.41 14.5z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c3.24 0 5.97-1.07 7.96-2.93l-3.6-2.8c-.98.66-2.23 1.07-3.6 1.07-3.22 0-5.71-1.81-6.59-4.46L1.63 10.97l-3.78 2.93C1.63 20.33 7.37 23 12 23z"
+              />
+            </svg>
+            <span>Sign in with Google</span>
+          </button>
 
           <div className="mt-8 border-t border-border-subtle pt-6 text-center">
             <p className="text-body-sm text-text-secondary">
