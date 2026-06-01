@@ -55,6 +55,87 @@ export interface Report {
   resolutionQualityScore?: number;
 }
 
+export interface AlertItem {
+  id: string;
+  type: 'fire' | 'flood' | 'structural' | 'traffic';
+  title: string;
+  location: string;
+  severity: 'Critical' | 'Major' | 'Minor';
+  status: 'Active' | 'Acknowledged' | 'Resolved';
+  time?: string;
+  timestamp: string; // ISO string
+  description: string;
+  hazardId?: string;
+}
+
+export interface RepairItem {
+  id: string;
+  hazardId: string;
+  hazardTitle: string;
+  location: string;
+  assignedTeam: string;
+  status: 'Assigned' | 'Repairing' | 'Resolved';
+  startDate?: string;
+  actualCompletionDate?: string | null;
+  timestamp: string; // ISO string
+  notes?: string;
+}
+
+export function getAlerts(): AlertItem[] {
+  try {
+    const saved = localStorage.getItem('roadwatch_alerts');
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.error('Failed to load alerts from localStorage', e);
+  }
+  return [];
+}
+
+export function getRepairs(): RepairItem[] {
+  try {
+    const saved = localStorage.getItem('roadwatch_repairs');
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.error('Failed to load repairs from localStorage', e);
+  }
+  return [];
+}
+
+export function addRepairRecord(hazard: Report, status: 'Assigned' | 'Repairing' | 'Resolved') {
+  const repairId = `rep-log-${hazard.id}-${status.toLowerCase()}`;
+  const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const record: RepairItem = {
+    id: repairId,
+    hazardId: hazard.id,
+    hazardTitle: hazard.title,
+    location: hazard.location,
+    assignedTeam: hazard.assignedTeam || 'Team Gamma (Rapid Response)',
+    status,
+    startDate: hazard.startDate || todayStr,
+    actualCompletionDate: status === 'Resolved' ? todayStr : null,
+    timestamp: new Date().toISOString(),
+    notes: hazard.repairNotes || ''
+  };
+  setDocument(getDocRef('repairs', repairId), record);
+}
+
+export function resolveAlertForHazard(hazardId: string) {
+  const alerts = getAlerts();
+  const matchingAlert = alerts.find(a => a.hazardId === hazardId);
+  if (matchingAlert) {
+    updateDocument(getDocRef('alerts', matchingAlert.id), { status: 'Resolved' });
+  }
+}
+
+export function acknowledgeAlert(alertId: string) {
+  updateDocument(getDocRef('alerts', alertId), { status: 'Acknowledged' });
+  const alerts = getAlerts();
+  const alert = alerts.find(a => a.id === alertId);
+  if (alert && alert.hazardId) {
+    updateDocument(getDocRef('hazards', alert.hazardId), { acknowledged: true });
+  }
+}
+
 export interface TelemetryLog {
   time: string;
   module: string;
@@ -234,9 +315,37 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
     beforeImageUrl: report.beforeImageUrl || report.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
   };
   
-  // Save to Firestore
-  setDocument(getDocRef('reports', newReport.id), newReport);
+  // Save to Firestore (hazards collection)
+  setDocument(getDocRef('hazards', newReport.id), newReport);
   addLog('Incident Reporter', `New hazard reported: ${newReport.title} at ${newReport.location}`, newReport.severity === 'Critical' ? 'WARN' : 'INFO');
+
+  // Trigger alert if Critical severity
+  if (newReport.severity === 'Critical') {
+    const alertId = `alt-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    let alertType: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
+    const titleLower = newReport.title.toLowerCase();
+    if (newReport.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
+      alertType = 'flood';
+    } else if (newReport.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
+      alertType = 'structural';
+    } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
+      alertType = 'fire';
+    }
+
+    const newAlert: AlertItem = {
+      id: alertId,
+      type: alertType,
+      title: newReport.title,
+      location: newReport.location,
+      severity: 'Critical',
+      status: 'Active',
+      timestamp: newReport.timestamp,
+      description: newReport.description || `Critical alert: ${newReport.title} at ${newReport.location}`,
+      hazardId: newReport.id
+    };
+    setDocument(getDocRef('alerts', alertId), newAlert);
+  }
+
   return newReport;
 }
 
@@ -264,8 +373,14 @@ export function resolveReport(id: string): void {
     repairNotes: report.repairNotes || 'Completed paving and smoothing of asphalt layer. Structural load validation complete.'
   };
 
-  updateDocument(getDocRef('reports', id), updatedFields);
+  updateDocument(getDocRef('hazards', id), updatedFields);
   
+  // Write repair record
+  addRepairRecord({ ...report, ...updatedFields }, 'Resolved');
+
+  // Resolve alert
+  resolveAlertForHazard(id);
+
   // Sync back to corresponding CitizenComplaint
   if (id.startsWith('rep-from-comp-')) {
     const complaintId = id.replace('rep-from-', '');
@@ -284,7 +399,7 @@ export function verifyRepair(id: string, rating: number, feedback: string): void
     resolutionQualityScore: Math.min(100, Math.round(88 + rating * 2.4))
   };
 
-  updateDocument(getDocRef('reports', id), updatedFields);
+  updateDocument(getDocRef('hazards', id), updatedFields);
 
   // Sync to complaint
   if (id.startsWith('rep-from-comp-')) {
@@ -310,11 +425,23 @@ export function verifyRepair(id: string, rating: number, feedback: string): void
 }
 
 export function deleteReport(id: string): void {
-  deleteDocument(getDocRef('reports', id));
+  deleteDocument(getDocRef('hazards', id));
 }
 
 export function updateReportStatus(id: string, updates: Partial<Report>): void {
-  updateDocument(getDocRef('reports', id), updates);
+  updateDocument(getDocRef('hazards', id), updates);
+
+  const reports = getReports();
+  const report = reports.find(r => r.id === id);
+  if (report) {
+    const merged = { ...report, ...updates };
+    if (updates.status === 'Assigned' || updates.status === 'Repairing') {
+      addRepairRecord(merged, updates.status);
+    }
+    if (updates.status === 'Resolved') {
+      resolveAlertForHazard(id);
+    }
+  }
 
   // Sync status changes back to CitizenComplaint
   if (id.startsWith('rep-from-comp-') && updates.status) {
@@ -329,8 +456,6 @@ export function updateReportStatus(id: string, updates: Partial<Report>): void {
     updateComplaintStatus(complaintId, compStatus);
   }
 
-  const reports = getReports();
-  const report = reports.find(r => r.id === id);
   if (report) {
     if (updates.acknowledged !== undefined) {
       addLog('Emergency Dispatch', `Hazard acknowledged: ${report.title} at ${report.location}`, 'INFO');
@@ -430,15 +555,24 @@ export interface CitizenComplaint {
   lng: number;
   x: number;
   y: number;
-  status: 'Submitted' | 'Verified' | 'Assigned' | 'Repair In Progress' | 'Resolved';
+  status: 'Submitted' | 'Verified' | 'Assigned' | 'Repairing' | 'Repair In Progress' | 'Resolved' | 'Closed';
   timestamp: string;
   votes: number;
+  priority?: 'Critical' | 'High' | 'Medium' | 'Low';
+  hazardType?: string;
+  notes?: string;
 
   citizenVerified?: boolean;
   citizenRating?: number;
   citizenFeedback?: string;
   satisfactionScore?: number;
   resolutionQualityScore?: number;
+  resolvedAt?: string;
+  createdAt?: string;
+  citizenId?: string;
+  upvotes?: number;
+  followUpImageUrl?: string;
+  citizenRejected?: boolean;
 }
 
 const DEFAULT_SENSORS: SensorDevice[] = [
@@ -580,7 +714,7 @@ export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp
     recommendedRepairTime: (newComplaint.priority === 'Critical' ? 'Within 24 Hours' : newComplaint.priority === 'High' ? 'Within 3 Days' : 'Within 7 Days'),
     beforeImageUrl: newComplaint.imageUrl
   };
-  setDocument(getDocRef('reports', matchingReportId), newReport);
+  setDocument(getDocRef('hazards', matchingReportId), newReport);
 
   // Generate notification in Firestore
   addDocument(getCollectionRef('notifications'), {
@@ -614,7 +748,7 @@ export function updateComplaintStatus(id: string, status: CitizenComplaint['stat
   const reports = getReports();
   const report = reports.find(r => r.id === reportId);
   if (report) {
-    updateDocument(getDocRef('reports', reportId), { status: reportStatus });
+    updateDocument(getDocRef('hazards', reportId), { status: reportStatus });
   }
 
   // Generate notification if status changed
@@ -665,7 +799,7 @@ export function verifyComplaint(id: string, rating: number, feedback: string): v
 
   // Sync to Report
   const reportId = `rep-from-${id}`;
-  updateDocument(getDocRef('reports', reportId), {
+  updateDocument(getDocRef('hazards', reportId), {
     citizenVerified: true,
     citizenRating: rating,
     citizenFeedback: feedback,
@@ -786,11 +920,11 @@ export function triggerDemoModeSimulation(): void {
 
 // Subscribe to Firestore updates and update LocalStorage to keep the entire app synced in real-time
 let seededReports = false;
-subscribeToQuery(buildQuery(getCollectionRef('reports')), (firebaseReports) => {
+subscribeToQuery(buildQuery(getCollectionRef('hazards')), (firebaseReports) => {
   if (firebaseReports.length === 0 && !seededReports) {
     seededReports = true;
     DEFAULT_REPORTS.forEach(r => {
-      setDocument(getDocRef('reports', r.id), r);
+      setDocument(getDocRef('hazards', r.id), r);
     });
   } else {
     localStorage.setItem('roadwatch_reports', JSON.stringify(firebaseReports));
@@ -822,5 +956,23 @@ subscribeToQuery(buildQuery(getCollectionRef('sensors')), (firebaseSensors) => {
     localStorage.setItem('roadwatch_sensors', JSON.stringify(firebaseSensors));
     window.dispatchEvent(new Event('roadwatch-sensors-updated'));
   }
+});
+
+// Subscribe to Alerts in real-time
+subscribeToQuery(buildQuery(getCollectionRef('alerts'), queryOrderBy('timestamp', 'desc')), (firebaseAlerts) => {
+  localStorage.setItem('roadwatch_alerts', JSON.stringify(firebaseAlerts));
+  window.dispatchEvent(new Event('roadwatch-alerts-updated'));
+});
+
+// Subscribe to Repairs in real-time
+subscribeToQuery(buildQuery(getCollectionRef('repairs'), queryOrderBy('timestamp', 'desc')), (firebaseRepairs) => {
+  localStorage.setItem('roadwatch_repairs', JSON.stringify(firebaseRepairs));
+  window.dispatchEvent(new Event('roadwatch-repairs-updated'));
+});
+
+// Subscribe to Users in real-time
+subscribeToQuery(buildQuery(getCollectionRef('users')), (firebaseUsers) => {
+  localStorage.setItem('roadwatch_users', JSON.stringify(firebaseUsers));
+  window.dispatchEvent(new Event('roadwatch-users-updated'));
 });
 

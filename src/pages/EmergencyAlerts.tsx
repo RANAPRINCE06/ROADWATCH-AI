@@ -1,28 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { AlertOctagon, Flame, ShieldAlert, CheckCircle2, UserCheck, Trash2, Send, Plus } from 'lucide-react';
-import { getReports, resolveReport as storageResolveReport, addReport as storageAddReport, deleteReport, updateReportStatus, Report } from '../utils/storage';
-
-interface AlertItem {
-  id: string;
-  type: 'fire' | 'flood' | 'structural' | 'traffic';
-  title: string;
-  location: string;
-  severity: 'Critical' | 'Major' | 'Minor';
-  status: 'Active' | 'Acknowledged' | 'Resolved';
-  time: string;
-  description: string;
-}
+import { AlertOctagon, Flame, ShieldAlert, CheckCircle2, UserCheck, Trash2, Plus } from 'lucide-react';
+import { 
+  getAlerts,
+  acknowledgeAlert,
+  resolveReport as storageResolveReport, 
+  addReport as storageAddReport, 
+  deleteReport,
+  Report,
+  AlertItem as StorageAlertItem
+} from '../utils/storage';
 
 export function EmergencyAlerts() {
-  const [reports, setReports] = useState<Report[]>(() => getReports());
+  const [alertsList, setAlertsList] = useState<StorageAlertItem[]>(() => getAlerts());
 
   useEffect(() => {
     const handleSync = () => {
-      setReports(getReports());
+      setAlertsList(getAlerts());
     };
-    window.addEventListener('roadwatch-reports-updated', handleSync);
+    window.addEventListener('roadwatch-alerts-updated', handleSync);
     return () => {
-      window.removeEventListener('roadwatch-reports-updated', handleSync);
+      window.removeEventListener('roadwatch-alerts-updated', handleSync);
     };
   }, []);
 
@@ -36,40 +33,10 @@ export function EmergencyAlerts() {
     return date.toLocaleDateString();
   };
 
-  const alerts: AlertItem[] = reports.map(r => {
-    let type: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
-    const titleLower = r.title.toLowerCase();
-    if (r.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
-      type = 'flood';
-    } else if (r.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
-      type = 'structural';
-    } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
-      type = 'fire';
-    } else {
-      type = 'traffic';
-    }
-
-    let severity: 'Critical' | 'Major' | 'Minor' = 'Minor';
-    if (r.severity === 'Critical') severity = 'Critical';
-    else if (r.severity === 'Active') severity = 'Major';
-
-    let status: 'Active' | 'Acknowledged' | 'Resolved' = 'Active';
-    if (r.resolved) status = 'Resolved';
-    else if (r.acknowledged) status = 'Acknowledged';
-
-    const timeStr = r.timestamp ? formatTimeAgo(new Date(r.timestamp)) : 'Just now';
-
-    return {
-      id: r.id,
-      type,
-      title: r.title,
-      location: r.location,
-      severity,
-      status,
-      time: timeStr,
-      description: r.description || `Visual evidence shows active ${r.title} condition. Crews and telemetry dispatched.`
-    };
-  });
+  const alerts = alertsList.map(a => ({
+    ...a,
+    time: a.timestamp ? formatTimeAgo(new Date(a.timestamp)) : 'Just now'
+  }));
 
   const [activeTab, setActiveTab] = useState<'All' | 'Critical' | 'Major' | 'Minor'>('All');
   const [filterStatus, setFilterStatus] = useState<'All' | 'Active' | 'Acknowledged' | 'Resolved'>('All');
@@ -80,7 +47,7 @@ export function EmergencyAlerts() {
       {
         title: 'Waterlogging: East Coast Expressway',
         location: 'Bayfront Connector',
-        severity: 'Active' as const,
+        severity: 'Critical' as const,
         icon: 'droplets' as const,
         description: 'Heavy precipitation causing roadside pooling on lanes 3 and 4. Speeds capped at 40km/h.'
       },
@@ -112,14 +79,20 @@ export function EmergencyAlerts() {
 
   const handleUpdateStatus = (id: string, newStatus: 'Active' | 'Acknowledged' | 'Resolved') => {
     if (newStatus === 'Resolved') {
-      storageResolveReport(id);
+      const alert = alertsList.find(a => a.id === id);
+      if (alert && alert.hazardId) {
+        storageResolveReport(alert.hazardId);
+      }
     } else if (newStatus === 'Acknowledged') {
-      updateReportStatus(id, { acknowledged: true });
+      acknowledgeAlert(id);
     }
   };
 
   const handleDeleteAlert = (id: string) => {
-    deleteReport(id);
+    const alert = alertsList.find(a => a.id === id);
+    if (alert && alert.hazardId) {
+      deleteReport(alert.hazardId);
+    }
   };
 
   const filteredAlerts = alerts.filter((alert) => {

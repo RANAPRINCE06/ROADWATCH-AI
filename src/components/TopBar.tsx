@@ -1,25 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Bell, Bot, MapPin, Menu, Play, AlertTriangle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getReports, Report } from '../utils/storage';
+import { getReports, Report, getAlerts, AlertItem } from '../utils/storage';
 
 export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen: boolean; onToggle: () => void; onToggleChat: () => void; isChatOpen: boolean }) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
-  const [criticalReports, setCriticalReports] = useState<Report[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>(() => getAlerts());
   const [showNotifications, setShowNotifications] = useState(false);
+  const [profile, setProfile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('roadwatch_user_profile');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      name: 'Marcus Thorne',
+      title: 'Chief Safety Officer',
+      avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCs1aCxQRSRbOaSzSN0IuWNbUJMmA7-n88Bk5LD4_K6qzpBufNOp4ON04PdaGd-6-uBjiKVCdr2mPAwmYYdV6QXSFIfY9KgQ26ieTh2PaUU8Pq_Pi0uJHs009XW8NUmUcs8A4YU9g8fcs64ACg6MdPUHf8zW3q_OC2LVklLfTeLw_jsslfuu1m2RmnaMjt8csa0tP2wz3yqfGriYWlrRAeUY4NOAVadZ0MhgJPuHurxSxVRqqJ_ENSQdjRfgP8zLYtLy7cRvNbG-l0'
+    };
+  });
 
   useEffect(() => {
-    const updateAlerts = () => {
-      const allReports = getReports();
-      const criticals = allReports.filter(r => !r.resolved && r.severity === 'Critical');
-      setCriticalReports(criticals);
+    const updateAlertsList = () => {
+      setAlerts(getAlerts().filter(a => a.status === 'Active' || a.status === 'Acknowledged'));
     };
+    updateAlertsList();
+    window.addEventListener('roadwatch-alerts-updated', updateAlertsList);
+    
+    const handleUserUpdate = () => {
+      try {
+        const saved = localStorage.getItem('roadwatch_user_profile');
+        if (saved) setProfile(JSON.parse(saved));
+      } catch (e) {}
+    };
+    window.addEventListener('roadwatch-user-updated', handleUserUpdate);
 
-    updateAlerts();
-    window.addEventListener('roadwatch-reports-updated', updateAlerts);
     return () => {
-      window.removeEventListener('roadwatch-reports-updated', updateAlerts);
+      window.removeEventListener('roadwatch-alerts-updated', updateAlertsList);
+      window.removeEventListener('roadwatch-user-updated', handleUserUpdate);
     };
   }, []);
 
@@ -100,9 +118,9 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
               title="Critical Active Alerts"
             >
               <Bell className="w-5 h-5" />
-              {criticalReports.length > 0 && (
+              {alerts.length > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white">
-                  {criticalReports.length}
+                  {alerts.length}
                 </span>
               )}
             </button>
@@ -111,24 +129,21 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-border-subtle z-50 p-4 animate-fade-in-up">
                 <div className="flex justify-between items-center border-b border-border-subtle pb-2 mb-2.5">
                   <h4 className="text-xs font-black text-primary tracking-wide uppercase flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 animate-pulse" /> Critical Hazards ({criticalReports.length})
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 animate-pulse" /> Critical Alerts ({alerts.length})
                   </h4>
                   <button onClick={() => setShowNotifications(false)} className="text-[10px] text-text-secondary hover:text-primary font-bold">✕</button>
                 </div>
                 <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar">
-                  {criticalReports.length === 0 ? (
+                  {alerts.length === 0 ? (
                     <div className="text-[10px] text-text-secondary text-center py-6 font-semibold">
-                      No active critical hazards
+                      No active critical alerts
                     </div>
                   ) : (
-                    criticalReports.map((r) => (
+                    alerts.map((a) => (
                       <div 
-                        key={r.id}
+                        key={a.id}
                         onClick={() => {
-                          navigate('/dashboard');
-                          setTimeout(() => {
-                            window.dispatchEvent(new CustomEvent('roadwatch-select-report', { detail: r.id }));
-                          }, 150);
+                          navigate('/alerts');
                           setShowNotifications(false);
                         }}
                         className="p-2.5 hover:bg-red-50/50 rounded-lg border border-red-100/50 cursor-pointer transition-colors flex gap-2.5 items-start group"
@@ -137,9 +152,9 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
                           <AlertTriangle className="w-4 h-4 text-red-600" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-bold text-primary group-hover:text-red-700 transition-colors truncate leading-tight">{r.title}</p>
-                          <p className="text-[9px] text-text-secondary truncate mt-0.5">{r.location}</p>
-                          <p className="text-[8px] text-text-secondary/60 mt-0.5 italic">{r.source}</p>
+                          <p className="text-[11px] font-bold text-primary group-hover:text-red-700 transition-colors truncate leading-tight">{a.title}</p>
+                          <p className="text-[9px] text-text-secondary truncate mt-0.5">{a.location}</p>
+                          <p className="text-[8px] text-text-secondary/60 mt-0.5 italic">{a.status}</p>
                         </div>
                       </div>
                     ))
@@ -184,15 +199,15 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
         
         <div className="h-8 w-px bg-outline-variant"></div>
         
-        <div className="flex items-center gap-3 cursor-pointer group">
+        <div className="flex items-center gap-3 cursor-pointer group" onClick={() => navigate('/settings')}>
           <div className="text-right">
-            <p className="text-body-sm font-bold leading-tight group-hover:text-primary transition-colors">Marcus Thorne</p>
-            <p className="text-[11px] text-on-surface-variant opacity-70">Chief Safety Officer</p>
+            <p className="text-body-sm font-bold leading-tight group-hover:text-primary transition-colors">{profile.name}</p>
+            <p className="text-[11px] text-on-surface-variant opacity-70">{profile.title}</p>
           </div>
           <img 
             alt="User profile" 
             className="w-10 h-10 rounded-full border border-border-subtle object-cover" 
-            src="https://lh3.googleusercontent.com/aida-public/AB6AXuCs1aCxQRSRbOaSzSN0IuWNbUJMmA7-n88Bk5LD4_K6qzpBufNOp4ON04PdaGd-6-uBjiKVCdr2mPAwmYYdV6QXSFIfY9KgQ26ieTh2PaUU8Pq_Pi0uJHs009XW8NUmUcs8A4YU9g8fcs64ACg6MdPUHf8zW3q_OC2LVklLfTeLw_jsslfuu1m2RmnaMjt8csa0tP2wz3yqfGriYWlrRAeUY4NOAVadZ0MhgJPuHurxSxVRqqJ_ENSQdjRfgP8zLYtLy7cRvNbG-l0" 
+            src={profile.avatarUrl} 
           />
         </div>
       </div>

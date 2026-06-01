@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { 
   getReports, 
+  getRepairs,
   resolveReport as storageResolveReport, 
   addReport as storageAddReport, 
   updateReportStatus, 
@@ -147,6 +148,7 @@ export function Dashboard() {
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [hoveredReportId, setHoveredReportId] = useState<string | null>(null);
   const [aiAccuracy, setAiAccuracy] = useState<number>(98.5);
+  const [meanResolveTime, setMeanResolveTime] = useState<number>(42);
   const [now, setNow] = useState<Date>(new Date());
   const [searchQuery, setSearchQuery] = useState<string>('');
   
@@ -358,11 +360,45 @@ export function Dashboard() {
     });
   };
 
+  const recalculateMeanResolveTime = () => {
+    const reps = getRepairs();
+    const resolvedReps = reps.filter(r => r.status === 'Resolved');
+    if (resolvedReps.length === 0) {
+      setMeanResolveTime(42);
+      return;
+    }
+    
+    let totalMinutes = 0;
+    let count = 0;
+    const allReports = getReports();
+    
+    resolvedReps.forEach(rep => {
+      const hazard = allReports.find(h => h.id === rep.hazardId);
+      if (hazard && hazard.timestamp && rep.timestamp) {
+        const start = new Date(hazard.timestamp).getTime();
+        const end = new Date(rep.timestamp).getTime();
+        const diffMin = (end - start) / (60 * 1000);
+        if (diffMin > 0) {
+          totalMinutes += diffMin;
+          count++;
+        }
+      }
+    });
+    
+    if (count > 0) {
+      setMeanResolveTime(Math.round(totalMinutes / count));
+    } else {
+      setMeanResolveTime(42);
+    }
+  };
+
   useEffect(() => {
     setReports(loadReportsFromStorage());
+    recalculateMeanResolveTime();
     
     const handleSync = () => {
       setReports(loadReportsFromStorage());
+      recalculateMeanResolveTime();
     };
     const handleStartSim = () => {
       startSimulation();
@@ -392,6 +428,7 @@ export function Dashboard() {
     };
 
     window.addEventListener('roadwatch-reports-updated', handleSync);
+    window.addEventListener('roadwatch-repairs-updated', handleSync);
     window.addEventListener('roadwatch-start-simulation', handleStartSim);
     window.addEventListener('roadwatch-search', handleSearch);
     window.addEventListener('roadwatch-select-report', handleSelectReport);
@@ -399,6 +436,7 @@ export function Dashboard() {
     
     return () => {
       window.removeEventListener('roadwatch-reports-updated', handleSync);
+      window.removeEventListener('roadwatch-repairs-updated', handleSync);
       window.removeEventListener('roadwatch-start-simulation', handleStartSim);
       window.removeEventListener('roadwatch-search', handleSearch);
       window.removeEventListener('roadwatch-select-report', handleSelectReport);
@@ -773,7 +811,7 @@ export function Dashboard() {
           <div>
             <span className="text-[9px] font-bold text-text-secondary uppercase tracking-widest block mb-1">Mean Resolve Time</span>
             <div className="text-2xl font-black text-primary flex items-baseline">
-              42<span className="text-xs font-semibold ml-0.5 text-text-secondary">Mins</span>
+              {meanResolveTime}<span className="text-xs font-semibold ml-0.5 text-text-secondary">Mins</span>
             </div>
           </div>
           <span className="text-[10px] text-green-600 font-bold mt-2">⚡ Peak dispatch speed</span>

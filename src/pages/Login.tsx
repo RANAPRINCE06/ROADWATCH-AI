@@ -1,11 +1,95 @@
-import React from 'react';
-import { Shield, Mail, Lock } from 'lucide-react';
+import React, { useState } from 'react';
+import { Shield, Mail, Lock, RefreshCw } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { 
+  auth, 
+  realFirebaseActive, 
+  setDocument, 
+  getDocRef 
+} from '../utils/firebase';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword 
+} from 'firebase/auth';
 
 export function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const redirect = searchParams.get('redirect') || '/dashboard';
+  const redirect = searchParams.get('redirect');
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password.trim()) return;
+
+    setIsLoading(true);
+    setErrorMsg(null);
+
+    const isGov = email.toLowerCase().endsWith('.gov');
+    const role = isGov ? 'admin' : 'citizen';
+    const namePart = email.split('@')[0];
+    const displayName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+    const title = isGov ? 'Chief Safety Officer' : 'Resident';
+
+    const userProfile = {
+      email,
+      role,
+      name: displayName,
+      title,
+      avatarUrl: isGov 
+        ? "https://lh3.googleusercontent.com/aida-public/AB6AXuCs1aCxQRSRbOaSzSN0IuWNbUJMmA7-n88Bk5LD4_K6qzpBufNOp4ON04PdaGd-6-uBjiKVCdr2mPAwmYYdV6QXSFIfY9KgQ26ieTh2PaUU8Pq_Pi0uJHs009XW8NUmUcs8A4YU9g8fcs64ACg6MdPUHf8zW3q_OC2LVklLfTeLw_jsslfuu1m2RmnaMjt8csa0tP2wz3yqfGriYWlrRAeUY4NOAVadZ0MhgJPuHurxSxVRqqJ_ENSQdjRfgP8zLYtLy7cRvNbG-l0"
+        : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
+    };
+
+    if (realFirebaseActive) {
+      try {
+        let userCredential;
+        try {
+          userCredential = await signInWithEmailAndPassword(auth, email, password);
+        } catch (loginErr: any) {
+          if (loginErr.code === 'auth/user-not-found' || loginErr.code === 'auth/invalid-credential' || loginErr.code === 'auth/cannot-find-user') {
+            try {
+              userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            } catch (signupErr: any) {
+              throw new Error(signupErr.message || 'Authentication failed.');
+            }
+          } else {
+            throw new Error(loginErr.message || 'Authentication failed.');
+          }
+        }
+
+        const user = userCredential.user;
+        const completeProfile = { ...userProfile, uid: user.uid };
+        
+        await setDocument(getDocRef('users', user.uid), completeProfile);
+
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
+        localStorage.setItem('user_role', role);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        
+        navigate(redirect || (role === 'admin' ? '/dashboard' : '/citizen'));
+      } catch (err: any) {
+        console.error('Firebase Auth Error:', err);
+        setErrorMsg(err.message || 'Authentication failed. Please verify credentials.');
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      setTimeout(() => {
+        const completeProfile = { ...userProfile, uid: `mock-uid-${Date.now()}` };
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
+        localStorage.setItem('user_role', role);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        
+        setIsLoading(false);
+        navigate(redirect || (role === 'admin' ? '/dashboard' : '/citizen'));
+      }, 1000);
+    }
+  };
 
   return (
     <div className="bg-background text-on-surface min-h-screen flex flex-col relative overflow-hidden">
@@ -34,9 +118,15 @@ export function Login() {
             <p className="text-body-md text-text-secondary">Access secure infrastructure data & analytics.</p>
           </div>
 
-          <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); navigate(redirect); }}>
+          {errorMsg && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 text-xs font-bold rounded-lg leading-normal">
+              {errorMsg}
+            </div>
+          )}
+
+          <form className="space-y-6" onSubmit={handleLogin}>
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mb-2">Government Email</label>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mb-2">Government / Public Email</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail className="w-4 h-4 text-text-secondary" />
@@ -44,7 +134,9 @@ export function Login() {
                 <input 
                   type="email" 
                   required 
-                  placeholder="official@city.gov" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="official@city.gov or citizen@gmail.com" 
                   className="block w-full pl-10 pr-3 py-2 bg-surface-bright border border-border-subtle rounded-lg focus:ring-1 focus:ring-deep-slate focus:bg-surface-container-lowest text-body-md text-on-surface placeholder-text-secondary/50 transition-colors"
                 />
               </div>
@@ -59,6 +151,8 @@ export function Login() {
                 <input 
                   type="password" 
                   required 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••" 
                   className="block w-full pl-10 pr-3 py-2 bg-surface-bright border border-border-subtle rounded-lg focus:ring-1 focus:ring-deep-slate focus:bg-surface-container-lowest text-body-md text-on-surface placeholder-text-secondary/50 transition-colors"
                 />
@@ -83,8 +177,15 @@ export function Login() {
               </div>
             </div>
 
-            <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg text-primary bg-safety-yellow hover:bg-secondary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-safety-yellow text-title-md transition-all duration-200 btn-inset active:scale-95 shadow-sm">
-              Sign In securely
+            <button 
+              type="submit" 
+              disabled={isLoading}
+              className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg text-primary bg-safety-yellow hover:bg-secondary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-safety-yellow text-title-md font-bold transition-all duration-200 btn-inset active:scale-95 shadow-sm disabled:opacity-50"
+            >
+              {isLoading ? (
+                <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              {isLoading ? 'Verifying Credentials...' : 'Sign In securely'}
             </button>
           </form>
 

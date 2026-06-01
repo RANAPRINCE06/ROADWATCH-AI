@@ -39,8 +39,46 @@ const citizenLinks = [
 
 export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const location = useLocation();
+  const [role, setRole] = React.useState<'admin' | 'citizen'>(() => {
+    try {
+      const saved = localStorage.getItem('roadwatch_user_profile');
+      if (saved) {
+        const profile = JSON.parse(saved);
+        return profile.role || 'admin';
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return 'admin';
+  });
+
+  React.useEffect(() => {
+    const handleUserUpdate = () => {
+      try {
+        const saved = localStorage.getItem('roadwatch_user_profile');
+        if (saved) {
+          const profile = JSON.parse(saved);
+          setRole(profile.role || 'admin');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    window.addEventListener('roadwatch-user-updated', handleUserUpdate);
+    return () => {
+      window.removeEventListener('roadwatch-user-updated', handleUserUpdate);
+    };
+  }, []);
+
+  const showLink = (name: string) => {
+    if (role === 'citizen') {
+      return ['Live Heatmap', 'Report Hazard', 'Citizen Portal', 'AI Command Center'].includes(name);
+    }
+    return true;
+  };
 
   const renderLink = (link: { name: string; icon: any; path: string }) => {
+    if (!showLink(link.name)) return null;
     const isActive = location.pathname === link.path;
     return (
       <Link
@@ -80,10 +118,12 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
           {coreLinks.map(renderLink)}
         </div>
 
-        <div className="space-y-1">
-          <span className="text-[9px] font-bold text-text-secondary/60 uppercase tracking-wider px-3 block mb-1">AI & Intelligence</span>
-          {intelligenceLinks.map(renderLink)}
-        </div>
+        {role === 'admin' && (
+          <div className="space-y-1">
+            <span className="text-[9px] font-bold text-text-secondary/60 uppercase tracking-wider px-3 block mb-1">AI & Intelligence</span>
+            {intelligenceLinks.map(renderLink)}
+          </div>
+        )}
 
         <div className="space-y-1">
           <span className="text-[9px] font-bold text-text-secondary/60 uppercase tracking-wider px-3 block mb-1">Citizen & IoT</span>
@@ -92,10 +132,13 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
       </nav>
 
       <div className="p-4 border-t border-outline-variant flex-shrink-0">
-        <button className="w-full bg-error text-white py-2.5 rounded-lg flex items-center justify-center gap-2 font-bold active:scale-95 transition-transform shadow-sm hover:bg-red-600 text-xs cursor-pointer">
+        <Link 
+          to="/alerts" 
+          className="w-full bg-error text-white py-2.5 rounded-lg flex items-center justify-center gap-2 font-bold active:scale-95 transition-transform shadow-sm hover:bg-red-650 text-xs cursor-pointer"
+        >
           <Zap className="w-4.5 h-4.5" />
           <span>Emergency Response</span>
-        </button>
+        </Link>
       </div>
     </aside>
   );

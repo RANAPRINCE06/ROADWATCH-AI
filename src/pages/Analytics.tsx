@@ -1,24 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, Cpu, Server, Activity, Timer, ChevronDown } from 'lucide-react';
-import { getReports, Report } from '../utils/storage';
+import { getReports, getRepairs, Report } from '../utils/storage';
 
 export function Analytics() {
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<'7' | '30' | 'all'>('7');
 
   const [reports, setReports] = useState<Report[]>(() => getReports());
+  const [repairs, setRepairs] = useState(() => getRepairs());
 
   useEffect(() => {
     const handleSync = () => {
       setReports(getReports());
+      setRepairs(getRepairs());
     };
     window.addEventListener('roadwatch-reports-updated', handleSync);
+    window.addEventListener('roadwatch-repairs-updated', handleSync);
     return () => {
       window.removeEventListener('roadwatch-reports-updated', handleSync);
+      window.removeEventListener('roadwatch-repairs-updated', handleSync);
     };
   }, []);
 
-  const activeReports = reports.filter(r => !r.resolved);
+  const getFilteredReports = () => {
+    if (dateRange === 'all') return reports;
+    const now = new Date();
+    const cutoff = new Date();
+    cutoff.setDate(now.getDate() - (dateRange === '7' ? 7 : 30));
+    return reports.filter(r => new Date(r.timestamp) >= cutoff);
+  };
+
+  const filteredReports = getFilteredReports();
+  const activeReports = filteredReports.filter(r => !r.resolved);
   const totalActive = activeReports.length;
 
   const countByType = {
@@ -62,7 +76,7 @@ export function Analytics() {
   const weekdayCounts = Array(7).fill(0);
   const weekdayBreakdowns = Array(7).fill(null).map(() => ({ pothole: 0, flooding: 0, obstacle: 0 }));
 
-  reports.forEach(r => {
+  filteredReports.forEach(r => {
     const date = new Date(r.timestamp);
     const day = date.getDay(); // 0 is Sunday, 1 is Monday, etc.
     const index = day === 0 ? 6 : day - 1; // map Monday to 0, Sunday to 6
@@ -92,6 +106,32 @@ export function Analytics() {
   });
 
   const maxVal = Math.max(...weeklyData.map(d => d.count), 1);
+
+  const calculateMeanResolveTime = () => {
+    const resolvedReps = repairs.filter(r => r.status === 'Resolved');
+    if (resolvedReps.length === 0) return 42;
+
+    let totalMinutes = 0;
+    let count = 0;
+    
+    resolvedReps.forEach(rep => {
+      const hazard = reports.find(h => h.id === rep.hazardId);
+      if (hazard && hazard.timestamp && rep.timestamp) {
+        const start = new Date(hazard.timestamp).getTime();
+        const end = new Date(rep.timestamp).getTime();
+        const diffMin = (end - start) / (60 * 1000);
+        if (diffMin > 0) {
+          totalMinutes += diffMin;
+          count++;
+        }
+      }
+    });
+
+    if (count === 0) return 42;
+    return Math.round(totalMinutes / count);
+  };
+
+  const meanResolveTime = calculateMeanResolveTime();
 
   return (
     <div className="p-8 max-w-[1440px] mx-auto pb-32">
@@ -127,7 +167,7 @@ export function Analytics() {
         <div className="bg-white p-5 rounded-xl border border-border-subtle shadow-sm flex items-center justify-between">
           <div>
             <span className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Mean Resolve Time</span>
-            <h3 className="text-2xl font-bold text-primary mt-1">42m</h3>
+            <h3 className="text-2xl font-bold text-primary mt-1">{meanResolveTime}m</h3>
             <p className="text-[10px] text-green-600 font-semibold mt-1">▼ 12% vs last week</p>
           </div>
           <div className="p-3 bg-slate-50 border border-border-subtle rounded-lg text-primary">
@@ -157,9 +197,15 @@ export function Analytics() {
               <h3 className="font-bold text-sm text-primary">Weekly Incident Frequency</h3>
               <p className="text-xs text-text-secondary">Distribution of detected municipal anomalies by weekday.</p>
             </div>
-            <span className="text-[10px] bg-slate-100 font-bold px-2 py-0.5 rounded text-text-secondary uppercase tracking-wider flex items-center gap-1">
-              Last 7 Days <ChevronDown className="w-3 h-3" />
-            </span>
+            <select
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value as any)}
+              className="text-[10px] bg-slate-100 font-bold px-2 py-1 rounded text-text-secondary border border-border-subtle outline-none cursor-pointer hover:bg-slate-200 transition-colors"
+            >
+              <option value="7">Last 7 Days</option>
+              <option value="30">Last 30 Days</option>
+              <option value="all">All Time</option>
+            </select>
           </div>
 
           {/* SVG graph */}

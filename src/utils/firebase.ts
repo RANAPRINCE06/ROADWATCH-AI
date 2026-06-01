@@ -21,6 +21,13 @@ import {
   uploadBytesResumable, 
   getDownloadURL 
 } from 'firebase/storage';
+import { 
+  getAuth,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
 
 // Check if Firebase environment variables are configured
 const firebaseConfig = {
@@ -39,6 +46,7 @@ const isConfigured =
 
 let db: any;
 let storage: any;
+let auth: any;
 let realFirebaseActive = false;
 
 if (isConfigured) {
@@ -46,6 +54,7 @@ if (isConfigured) {
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     db = getFirestore(app);
     storage = getStorage(app);
+    auth = getAuth(app);
     realFirebaseActive = true;
     console.log('Firebase initialized successfully.');
   } catch (err) {
@@ -179,7 +188,10 @@ if (!realFirebaseActive) {
   };
 }
 
-export { db, storage, realFirebaseActive };
+const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+const realGeminiActive = !!(geminiApiKey && geminiApiKey !== 'YOUR_GEMINI_API_KEY' && geminiApiKey !== 'MY_GEMINI_API_KEY');
+
+export { db, storage, auth, realFirebaseActive, realGeminiActive, geminiApiKey };
 
 // Firestore API wrappers that support both real Firebase and fallback local mock
 export function getCollectionRef(path: string) {
