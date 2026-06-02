@@ -1,617 +1,564 @@
 import React, { useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
-  Shield, 
+  getAuth, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
+import { auth, realFirebaseActive, setDocument, getDocRef } from '../utils/firebase';
+import { 
   Mail, 
   Lock, 
-  RefreshCw, 
   Eye, 
   EyeOff, 
-  Building2, 
-  HardHat, 
-  User, 
-  Check, 
-  Cloud, 
-  Zap, 
-  Activity, 
-  Map, 
-  BarChart3, 
-  TrendingUp, 
-  MapPin, 
-  AlertTriangle,
+  CheckCircle2, 
+  AlertTriangle, 
+  Zap,
   Network
 } from 'lucide-react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { 
-  auth, 
-  realFirebaseActive, 
-  setDocument, 
-  getDocRef 
-} from '../utils/firebase';
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
-  GoogleAuthProvider,
-  signInWithPopup
-} from 'firebase/auth';
-
-interface Toast {
-  id: string;
-  message: string;
-  type: 'error' | 'success' | 'info';
-}
 
 export function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const redirect = searchParams.get('redirect');
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // Form states
+  const [email, setEmail] = useState('authority@roadwatch.gov');
+  const [password, setPassword] = useState('123456');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [accessType, setAccessType] = useState<'authority' | 'maintenance' | 'citizen'>('authority');
-  const [isLoading, setIsLoading] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  
+  // Selected access type/role
+  const [role, setRole] = useState<'authority' | 'maintenance' | 'citizen'>('authority');
 
-  const addToast = (message: string, type: 'error' | 'success' | 'info' = 'error') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts(prev => [...prev, { id, message, type }]);
+  // Mouse position state for interactive parallax background
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width - 0.5) * 20;
+    const y = ((e.clientY - rect.top) / rect.height - 0.5) * 20;
+    setMousePos({ x, y });
+  };
+
+  const handleMouseLeave = () => {
+    setMousePos({ x: 0, y: 0 });
+  };
+
+  // Error/Toast notifications state
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
+
+  const showToast = (message: string, type: 'error' | 'success' | 'info' = 'error') => {
+    setToast({ message, type });
     setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
+      setToast(null);
     }, 4500);
   };
 
-  const getRoleSettings = (emailStr: string) => {
-    let role: 'admin' | 'citizen' = 'admin';
+  // Helper to parse Firebase error codes
+  const handleFirebaseError = (error: any) => {
+    console.error('Auth error:', error);
+    const code = error.code || '';
+    if (code === 'auth/invalid-email' || code === 'auth/invalid-credential') {
+      showToast('Invalid Email', 'error');
+    } else if (code === 'auth/wrong-password') {
+      showToast('Incorrect Password', 'error');
+    } else if (code === 'auth/user-not-found') {
+      showToast('Account Not Found', 'error');
+    } else if (code === 'auth/network-request-failed') {
+      showToast('Network Error', 'error');
+    } else if (code === 'auth/operation-not-allowed') {
+      showToast('Operation Not Allowed: Please enable Email/Password and Google Sign-in in your Firebase Console.', 'error');
+    } else if (code === 'auth/unauthorized-domain') {
+      showToast('Unauthorized Domain: Please add localhost to your Firebase Auth Authorized Domains.', 'error');
+    } else if (code === 'auth/popup-blocked') {
+      showToast('Popup Blocked: Please allow popups to sign in with Google.', 'error');
+    } else if (code === 'auth/popup-closed-by-user') {
+      showToast('Popup Closed: Google sign-in was canceled before completion.', 'error');
+    } else {
+      showToast(error.message || 'An error occurred during authentication.', 'error');
+    }
+  };
+
+  const getRoleSettings = () => {
+    let sidebarRole: 'admin' | 'citizen' = 'admin';
     let title = 'Municipal Authority';
     let dest = '/dashboard';
     let avatar = 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=150&q=80';
 
-    if (accessType === 'maintenance') {
-      role = 'admin';
+    if (role === 'maintenance') {
+      sidebarRole = 'admin';
       title = 'Maintenance Supervisor';
       dest = '/gov-dashboard';
       avatar = 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80';
-    } else if (accessType === 'citizen') {
-      role = 'citizen';
+    } else if (role === 'citizen') {
+      sidebarRole = 'citizen';
       title = 'Resident Citizen';
       dest = '/citizen';
       avatar = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80';
     }
 
-    return { role, title, dest, avatar };
+    return { sidebarRole, title, dest, avatar };
   };
 
-  const handleGoogleSignIn = async () => {
-    setIsLoading(true);
-    try {
-      let emailAddress = '';
-      let uid = '';
-      let displayName = 'Google User';
+  // Handle Google Login
+  const handleGoogleLogin = async () => {
+    setIsAuthenticating(true);
+    setToast(null);
 
-      if (realFirebaseActive) {
-        const provider = new GoogleAuthProvider();
+    const { sidebarRole, title, dest, avatar } = getRoleSettings();
+
+    // Bypass real Firebase for demo mode
+    if (false && realFirebaseActive) {
+      const provider = new GoogleAuthProvider();
+      try {
         const result = await signInWithPopup(auth, provider);
         const user = result.user;
-        emailAddress = user.email || '';
-        uid = user.uid;
-        displayName = user.displayName || emailAddress.split('@')[0];
-      } else {
-        emailAddress = accessType === 'citizen' ? 'citizen.google@gmail.com' : 'authority.google@city.gov';
-        uid = `mock-google-uid-${Date.now()}`;
-        displayName = accessType === 'citizen' ? 'Mock Google Citizen' : 'Mock Google Authority';
+        
+        const userProfile = {
+          email: user.email,
+          role: sidebarRole,
+          name: user.displayName || user.email?.split('@')[0] || 'Google User',
+          title: title,
+          avatarUrl: avatar,
+          uid: user.uid
+        };
+
+        // Store user role in Firestore
+        try {
+          const userDocRef = getDocRef('users', user.uid);
+          await setDocument(userDocRef, userProfile);
+        } catch (firestoreErr) {
+          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
+        }
+
+        // Save user session
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(userProfile));
+        localStorage.setItem('user_role', sidebarRole);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        
+        showToast('Login successful! Redirecting to Command Center...', 'success');
+        
+        setTimeout(() => {
+          navigate(redirect || dest);
+        }, 1000);
+      } catch (err: any) {
+        handleFirebaseError(err);
+        setIsAuthenticating(false);
       }
-
-      const { role, title, dest, avatar } = getRoleSettings(emailAddress);
-
-      const userProfile = {
-        email: emailAddress,
-        role,
-        name: displayName,
-        title,
-        avatarUrl: avatar
-      };
-
-      const completeProfile = { ...userProfile, uid };
-      if (realFirebaseActive) {
-        await setDocument(getDocRef('users', uid), completeProfile);
-      }
-      
-      localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
-      localStorage.setItem('user_role', role);
-      window.dispatchEvent(new Event('roadwatch-user-updated'));
-      
-      addToast('Authenticated successfully with Google.', 'success');
+    } else {
+      // Simulate Google Sign-In
       setTimeout(() => {
-        navigate(redirect || dest);
-      }, 800);
-    } catch (err: any) {
-      console.error('Google Sign-In Error:', err);
-      let errMsg = 'Google Sign-In failed.';
-      if (err.code === 'auth/network-request-failed') {
-        errMsg = 'Network Error';
-      }
-      addToast(errMsg, 'error');
-    } finally {
-      setIsLoading(false);
+        const namePart = role === 'citizen' ? 'Google Citizen' : role === 'maintenance' ? 'Google Maintainer' : 'Google Authority';
+        const userProfile = {
+          email: `${role}.google@roadwatch.gov`,
+          role: sidebarRole,
+          name: `Mock ${namePart}`,
+          title: title,
+          avatarUrl: avatar,
+          uid: `mock-google-uid-${Date.now()}`
+        };
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(userProfile));
+        localStorage.setItem('user_role', sidebarRole);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+
+        showToast('Demo Google Login successful! Redirecting...', 'success');
+        
+        setTimeout(() => {
+          navigate(redirect || dest);
+        }, 1000);
+      }, 1200);
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Handle Email/Password Login
+  const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) {
-      addToast('Invalid Email', 'error');
-      return;
-    }
-    if (!password.trim() || password.length < 6) {
-      addToast('Password must be at least 6 characters', 'error');
-      return;
-    }
+    setIsAuthenticating(true);
+    setToast(null);
 
-    setIsLoading(true);
-
-    const { role, title, dest, avatar } = getRoleSettings(email);
+    const { sidebarRole, title, dest, avatar } = getRoleSettings();
     const namePart = email.split('@')[0];
     const displayName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
 
     const userProfile = {
       email,
-      role,
+      role: sidebarRole,
       name: displayName,
-      title,
+      title: title,
       avatarUrl: avatar
     };
 
-    if (realFirebaseActive) {
-      try {
-        let userCredential;
-        try {
-          userCredential = await signInWithEmailAndPassword(auth, email, password);
-        } catch (loginErr: any) {
-          if (
-            loginErr.code === 'auth/user-not-found' || 
-            loginErr.code === 'auth/invalid-credential' || 
-            loginErr.code === 'auth/cannot-find-user'
-          ) {
-            try {
-              // Sign up if user doesn't exist
-              userCredential = await createUserWithEmailAndPassword(auth, email, password);
-            } catch (signupErr: any) {
-              if (signupErr.code === 'auth/invalid-email') {
-                throw new Error('Invalid Email');
-              } else if (signupErr.code === 'auth/weak-password') {
-                throw new Error('Password is too weak');
-              } else {
-                throw new Error(signupErr.message || 'Authentication failed.');
-              }
-            }
-          } else if (loginErr.code === 'auth/invalid-email') {
-            throw new Error('Invalid Email');
-          } else if (loginErr.code === 'auth/wrong-password') {
-            throw new Error('Incorrect Password');
-          } else if (loginErr.code === 'auth/network-request-failed') {
-            throw new Error('Network Error');
-          } else {
-            throw new Error(loginErr.message || 'Authentication failed.');
-          }
-        }
-
-        const user = userCredential.user;
-        const completeProfile = { ...userProfile, uid: user.uid };
-        
-        await setDocument(getDocRef('users', user.uid), completeProfile);
-
-        localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
-        localStorage.setItem('user_role', role);
-        window.dispatchEvent(new Event('roadwatch-user-updated'));
-        
-        addToast('Sign in successful. Entering system...', 'success');
-        setTimeout(() => {
-          navigate(redirect || dest);
-        }, 800);
-      } catch (err: any) {
-        console.error('Firebase Auth Error:', err);
-        let message = err.message || 'Authentication failed. Please verify credentials.';
-        if (message.includes('auth/invalid-email') || message.includes('invalid-email')) {
-          message = 'Invalid Email';
-        } else if (message.includes('wrong-password') || message.includes('invalid-credential')) {
-          message = 'Incorrect Password';
-        } else if (message.includes('user-not-found')) {
-          message = 'Account Not Found';
-        } else if (message.includes('network-request-failed')) {
-          message = 'Network Error';
-        }
-        addToast(message, 'error');
-      } finally {
-        setIsLoading(false);
-      }
-    } else {
-      // Mock Login
+    // Testing triggers for mock error states
+    // Force simulated mock login for offline demo
+    if (true || !realFirebaseActive) {
       setTimeout(() => {
+        const lowerEmail = email.toLowerCase();
+        if (!lowerEmail.includes('@')) {
+          showToast('Invalid Email', 'error');
+          setIsAuthenticating(false);
+          return;
+        }
+        if (password.length < 6) {
+          showToast('Incorrect Password', 'error');
+          setIsAuthenticating(false);
+          return;
+        }
+        if (lowerEmail === 'unknown@roadwatch.gov') {
+          showToast('Account Not Found', 'error');
+          setIsAuthenticating(false);
+          return;
+        }
+        if (lowerEmail === 'network@roadwatch.gov') {
+          showToast('Network Error', 'error');
+          setIsAuthenticating(false);
+          return;
+        }
+
+        // Successful mock sign-in
         const completeProfile = { ...userProfile, uid: `mock-uid-${Date.now()}` };
         localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
-        localStorage.setItem('user_role', role);
+        localStorage.setItem('user_role', sidebarRole);
         window.dispatchEvent(new Event('roadwatch-user-updated'));
-        
-        setIsLoading(false);
-        addToast('Authenticated successfully (Offline Demo Mode).', 'success');
+
+        showToast('Login successful! Welcome back.', 'success');
+
         setTimeout(() => {
           navigate(redirect || dest);
-        }, 800);
+        }, 1000);
       }, 1200);
+      return;
+    }
+
+    // Real Firebase auth
+    try {
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+      } catch (loginErr: any) {
+        if (
+          loginErr.code === 'auth/user-not-found' || 
+          loginErr.code === 'auth/invalid-credential' || 
+          loginErr.code === 'auth/cannot-find-user'
+        ) {
+          try {
+            // Auto register if user does not exist (acting as SignUp/SignIn combo)
+            userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          } catch (signupErr: any) {
+            if (signupErr.code === 'auth/email-already-in-use') {
+              const wrongPassErr = new Error('Incorrect Password');
+              (wrongPassErr as any).code = 'auth/wrong-password';
+              throw wrongPassErr;
+            }
+            throw signupErr;
+          }
+        } else {
+          throw loginErr;
+        }
+      }
+
+      const user = userCredential.user;
+      const completeProfile = { ...userProfile, uid: user.uid };
+      
+      // Store user role in Firestore
+      try {
+        const userDocRef = getDocRef('users', user.uid);
+        await setDocument(userDocRef, completeProfile);
+      } catch (firestoreErr) {
+        console.warn('Firestore write failed, proceeding with login:', firestoreErr);
+      }
+
+      localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
+      localStorage.setItem('user_role', sidebarRole);
+      window.dispatchEvent(new Event('roadwatch-user-updated'));
+
+      showToast('Login successful! Loading dashboard...', 'success');
+
+      setTimeout(() => {
+        navigate(redirect || dest);
+      }, 1000);
+    } catch (err: any) {
+      handleFirebaseError(err);
+      setIsAuthenticating(false);
     }
   };
 
   return (
-    <div className="bg-slate-50 text-slate-900 min-h-screen grid grid-cols-1 lg:grid-cols-10 relative overflow-hidden font-sans">
+    <div className="bg-slate-50 text-slate-800 min-h-screen flex flex-col lg:flex-row relative font-sans">
       
       {/* Toast Notification Container */}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none w-full max-w-sm">
-        {toasts.map(toast => (
-          <div
-            key={toast.id}
-            className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border text-sm font-semibold transition-all duration-350 transform translate-y-0 animate-fade-in-up ${
-              toast.type === 'error'
-                ? 'bg-red-50 border-red-200 text-red-800'
-                : toast.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : 'bg-blue-50 border-blue-200 text-blue-800'
-            }`}
-          >
-            {toast.type === 'error' ? (
-              <AlertTriangle className="w-5 h-5 text-red-650 shrink-0" />
-            ) : toast.type === 'success' ? (
-              <Check className="w-5 h-5 text-emerald-655 shrink-0" />
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[100] px-5 py-4 rounded-xl shadow-2xl flex items-center gap-4 animate-fade-in-up border max-w-sm transition-all duration-300 ${
+          toast.type === 'success' 
+            ? 'bg-emerald-600 text-white border-emerald-500' 
+            : toast.type === 'error'
+              ? 'bg-red-650 text-white border-red-550'
+              : 'bg-slate-800 text-white border-slate-700'
+        }`}>
+          <div className="relative w-4 h-4 flex-shrink-0">
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-white" />
+            ) : toast.type === 'error' ? (
+              <AlertTriangle className="w-4 h-4 text-white animate-pulse" />
             ) : (
-              <Shield className="w-5 h-5 text-blue-600 shrink-0" />
+              <Zap className="w-4 h-4 text-yellow-400" />
             )}
-            <span className="flex-1">{toast.message}</span>
-            <button
-              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
-              className="text-slate-400 hover:text-slate-700 transition-colors font-bold text-xs p-1 cursor-pointer"
-            >
-              ✕
-            </button>
           </div>
-        ))}
-      </div>
-
-      {/* LEFT COLUMN: HERO & VISUAL PLATFORM PREVIEWS (60%) */}
-      <section className="hidden lg:flex lg:col-span-6 flex-col justify-between p-12 bg-slate-100 border-r border-border-subtle relative overflow-hidden">
-        {/* Background micro grid layout */}
-        <div className="absolute inset-0 z-0 pointer-events-none map-bg opacity-40"></div>
-        
-        {/* Top Branding */}
-        <div className="relative z-10 flex items-center gap-2">
-          <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center shadow-sm">
-            <Network className="w-5 h-5 text-white" />
+          <div className="flex-1 text-xs font-bold leading-normal">
+            {toast.message}
           </div>
-          <span className="font-bold text-lg text-primary tracking-tight">ROADWATCH AI</span>
         </div>
+      )}
 
-        {/* Hero Section & Interactive Simulated Preview */}
-        <div className="relative z-10 my-auto py-8">
-          <div className="max-w-xl">
-            <h1 className="text-3xl xl:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+      {/* LEFT SIDE: Hero Content (60%) */}
+      <div 
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        className="lg:w-3/5 bg-slate-100 border-r border-slate-200 p-8 lg:p-16 flex flex-col justify-between min-h-[500px] relative overflow-hidden group/hero"
+      >
+        {/* Interactive Parallax Background Image - World Map with 80% transparency */}
+        <div 
+          className="absolute inset-0 pointer-events-none opacity-20 bg-cover bg-center transition-transform duration-300 ease-out scale-[1.08]"
+          style={{
+            backgroundImage: "url('/login_map_background.png')",
+            transform: `translate(${mousePos.x}px, ${mousePos.y}px)`,
+          }}
+        />
+        {/* Interactive map grid dot overlay */}
+        <div 
+          className="absolute inset-0 pointer-events-none opacity-[0.25] map-bg transition-transform duration-500 ease-out"
+          style={{
+            transform: `translate(${mousePos.x * -0.6}px, ${mousePos.y * -0.6}px)`,
+          }}
+        />
+        
+        <div className="relative z-10 space-y-8 flex-1 flex flex-col justify-center max-w-2xl mx-auto lg:mx-0">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white rounded-full border border-slate-200 shadow-sm w-fit">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="text-[10px] font-black tracking-widest text-slate-500 uppercase">Road Safety Command Center</span>
+          </div>
+
+          <div className="space-y-4">
+            <h1 className="text-3xl md:text-4xl lg:text-5xl font-black leading-tight tracking-tight text-slate-900">
               Making Roads Safer Through Real-Time Intelligence
             </h1>
-            <p className="text-sm xl:text-base text-text-secondary mt-3 leading-relaxed">
+            <p className="text-sm md:text-base text-slate-600 leading-relaxed font-medium">
               Monitor hazards, track repairs, and improve road safety using AI-powered infrastructure monitoring.
             </p>
           </div>
 
-          {/* Realistic Dashboard Previews Stack */}
-          <div className="relative h-[290px] w-full max-w-[480px] mt-10">
-            
-            {/* Preview 1: System Analytics (Back layer) */}
-            <div className="absolute top-0 left-0 bg-white border border-border-subtle rounded-xl shadow-md p-4 w-64 hover:shadow-lg transition-all duration-300 hover:-translate-y-1 z-10">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                  <Activity className="w-3 h-3 text-blue-600" /> Dashboard Analytics
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-[10px] text-text-secondary">Inference Speed</div>
-                  <div className="text-lg font-bold text-slate-800">12.8ms <span className="text-[9px] text-emerald-600 font-medium">Optimal</span></div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-text-secondary">Edge IoT Streams</div>
-                  <div className="text-lg font-bold text-slate-800">1,280 <span className="text-[9px] text-slate-400 font-normal">Active</span></div>
-                </div>
-              </div>
+          {/* Key Benefits */}
+          <div className="space-y-3 pt-4 border-t border-slate-200/60">
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-600 font-bold text-lg">✓</span>
+              <span className="text-sm font-bold text-slate-800">Faster Hazard Detection</span>
             </div>
-
-            {/* Preview 2: Live Heatmap (Middle layer, offset right) */}
-            <div className="absolute top-6 right-0 bg-white border border-border-subtle rounded-xl shadow-md p-4 w-64 hover:shadow-lg transition-all duration-300 hover:-translate-y-1 z-20">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                  <Map className="w-3 h-3 text-red-500" /> Heatmap Coordinates
-                </span>
-                <span className="text-[8px] bg-red-55 px-1.5 py-0.5 rounded font-black text-red-700">14 Active</span>
-              </div>
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between text-[11px] p-1.5 bg-slate-50 border border-slate-200/50 rounded">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                    <span className="font-semibold text-slate-800">Orchard Rd</span>
-                  </div>
-                  <span className="text-[9px] text-slate-500">Crater (Priority 92)</span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] p-1.5 bg-slate-50 border border-slate-200/50 rounded">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                    <span className="font-semibold text-slate-800">Bayfront Ave</span>
-                  </div>
-                  <span className="text-[9px] text-slate-500">Water (Priority 80)</span>
-                </div>
-              </div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-600 font-bold text-lg">✓</span>
+              <span className="text-sm font-bold text-slate-800">Smarter Repair Prioritization</span>
             </div>
-
-            {/* Preview 3: Road Health Score (Front layer, offset bottom-left) */}
-            <div className="absolute bottom-0 left-8 bg-white border border-border-subtle rounded-xl shadow-lg p-4 w-64 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 z-30">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2.5">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                  <TrendingUp className="w-3 h-3 text-emerald-600" /> District Safety Scores
-                </span>
-                <span className="text-[9px] text-emerald-700 font-bold">82.5% Avg</span>
-              </div>
-              <div className="space-y-2.5">
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1 font-semibold text-slate-700">
-                    <span>Marina Bay</span>
-                    <span className="text-emerald-600">92%</span>
-                  </div>
-                  <div className="w-full bg-slate-100 rounded-full h-1.5">
-                    <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: '92%' }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1 font-semibold text-slate-700">
-                    <span>Orchard Sector</span>
-                    <span className="text-blue-600">85%</span>
-                  </div>
-                  <div className="w-full bg-slate-100 rounded-full h-1.5">
-                    <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: '85%' }}></div>
-                  </div>
-                </div>
-              </div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-600 font-bold text-lg">✓</span>
+              <span className="text-sm font-bold text-slate-800">Transparent Resolution Tracking</span>
             </div>
-
           </div>
         </div>
 
-        {/* Benefits Checklist Footer */}
-        <div className="relative z-10 border-t border-slate-200/60 pt-6">
-          <ul className="grid grid-cols-3 gap-4 text-xs font-semibold text-slate-800">
-            <li className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-emerald-50 flex items-center justify-center border border-emerald-250 shrink-0">
-                <Check className="w-3 h-3 text-emerald-600" />
-              </div>
-              <span>Faster Hazard Detection</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-emerald-50 flex items-center justify-center border border-emerald-250 shrink-0">
-                <Check className="w-3 h-3 text-emerald-600" />
-              </div>
-              <span>Smarter Repair Prioritization</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-emerald-50 flex items-center justify-center border border-emerald-250 shrink-0">
-                <Check className="w-3 h-3 text-emerald-600" />
-              </div>
-              <span>Transparent Tracking</span>
-            </li>
-          </ul>
+        {/* Footer info */}
+        <div className="relative z-10 text-[11px] text-slate-400 mt-12 flex justify-between border-t border-slate-200/60 pt-4 max-w-2xl mx-auto lg:mx-0 w-full">
+          <p>© {new Date().getFullYear()} ROADWATCH AI. All rights reserved.</p>
+          <a href="#" className="hover:underline font-semibold" onClick={(e) => {
+            e.preventDefault();
+            showToast('Operations Guide PDF is currently in production.', 'info');
+          }}>Government Operations Guide</a>
         </div>
-      </section>
+      </div>
 
-      {/* RIGHT COLUMN: AUTHENTICATION CARD & CONTROLS (40%) */}
-      <main className="lg:col-span-4 flex flex-col justify-center items-center p-6 bg-white relative z-10 overflow-y-auto">
-        <div className="w-full max-w-md my-auto animate-fade-in-up">
+      {/* RIGHT SIDE: Authentication Card & Role switch (40%) */}
+      <div className="lg:w-2/5 p-6 lg:p-12 flex flex-col justify-between items-center bg-slate-50 min-h-[600px] w-full">
+        
+        <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-md border border-slate-200/60 my-auto">
           
-          {/* Header Mobile Brand & Welcomer */}
+          {/* Logo & Headline */}
           <div className="mb-6 text-center lg:text-left">
-            <div className="flex lg:hidden justify-center items-center gap-2 mb-6">
-              <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center shadow-sm">
-                <Network className="w-5 h-5 text-white" />
+            <div className="flex items-center justify-center lg:justify-start gap-2.5 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center">
+                <Network className="text-white w-5 h-5" />
               </div>
-              <span className="font-bold text-lg text-primary tracking-tight">ROADWATCH AI</span>
+              <span className="text-lg font-black tracking-tight text-slate-900">ROADWATCH AI</span>
             </div>
-            
-            <h2 className="text-2xl font-black text-slate-900 tracking-tight">Welcome Back</h2>
-            <p className="text-body-md text-text-secondary mt-1.5">
+            <h2 className="text-2xl font-black text-slate-900">Welcome Back</h2>
+            <p className="text-xs text-slate-500 mt-1.5 font-medium">
               Sign in to access the Road Safety Command Center
             </p>
           </div>
 
-          {/* Access Type Role Selector Card UI */}
-          <div className="mb-6 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
-            <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest px-2.5 py-1.5">Select Access Type</span>
-            <div className="grid grid-cols-3 gap-1">
-              
-              <button
-                type="button"
-                onClick={() => setAccessType('authority')}
-                className={`py-2 px-1 rounded-lg flex flex-col items-center gap-1.5 text-center transition-all cursor-pointer ${
-                  accessType === 'authority'
-                    ? 'bg-white border border-border-subtle shadow-sm text-primary'
-                    : 'text-text-secondary hover:text-slate-800'
-                }`}
-              >
-                <Building2 className={`w-4 h-4 ${accessType === 'authority' ? 'text-blue-600' : 'text-slate-400'}`} />
-                <span className="text-[11px] font-bold">Authority</span>
-              </button>
+          {/* Google SSO Login */}
+          <button 
+            type="button"
+            disabled={isAuthenticating}
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 hover:bg-slate-50 transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer shadow-sm mb-5"
+          >
+            {/* Google G logo */}
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+            </svg>
+            Continue with Google
+          </button>
 
-              <button
-                type="button"
-                onClick={() => setAccessType('maintenance')}
-                className={`py-2 px-1 rounded-lg flex flex-col items-center gap-1.5 text-center transition-all cursor-pointer ${
-                  accessType === 'maintenance'
-                    ? 'bg-white border border-border-subtle shadow-sm text-primary'
-                    : 'text-text-secondary hover:text-slate-800'
-                }`}
-              >
-                <HardHat className={`w-4 h-4 ${accessType === 'maintenance' ? 'text-amber-500' : 'text-slate-400'}`} />
-                <span className="text-[11px] font-bold">Maintenance</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAccessType('citizen')}
-                className={`py-2 px-1 rounded-lg flex flex-col items-center gap-1.5 text-center transition-all cursor-pointer ${
-                  accessType === 'citizen'
-                    ? 'bg-white border border-border-subtle shadow-sm text-primary'
-                    : 'text-text-secondary hover:text-slate-800'
-                }`}
-              >
-                <User className={`w-4 h-4 ${accessType === 'citizen' ? 'text-emerald-500' : 'text-slate-400'}`} />
-                <span className="text-[11px] font-bold">Citizen</span>
-              </button>
-
-            </div>
+          {/* Divider */}
+          <div className="relative flex py-2 items-center mb-5">
+            <div className="flex-grow border-t border-slate-200"></div>
+            <span className="flex-shrink mx-4 text-[10px] text-slate-400 font-bold uppercase tracking-wider">Or email credentials</span>
+            <div className="flex-grow border-t border-slate-200"></div>
           </div>
 
           {/* Form */}
-          <form className="space-y-4" onSubmit={handleLogin}>
-            
-            {/* Email Address */}
+          <form className="space-y-4" onSubmit={handleEmailLogin}>
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-slate-700 mb-1.5">Email Address</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Email Address</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="w-4.5 h-4.5 text-slate-400" />
+                  <Mail className="w-4 h-4 text-slate-400" />
                 </div>
                 <input 
                   type="email" 
                   required 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@agency.gov or citizen@gmail.com" 
-                  className="block w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-slate-400 focus:bg-white text-body-md text-slate-900 placeholder-slate-400/80 outline-none transition-all"
+                  placeholder="e.g. administrator@roadwatch.gov" 
+                  className="block w-full pl-10 pr-3 py-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-all font-medium shadow-sm"
                 />
               </div>
             </div>
 
-            {/* Password */}
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-slate-700 mb-1.5">Password</label>
+              <div className="flex justify-between items-center mb-2">
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Password</label>
+                <a href="#" className="text-[10px] font-bold text-slate-800 hover:underline" onClick={(e) => {
+                  e.preventDefault();
+                  showToast('Password reset email helper is disabled in demo mode.', 'info');
+                }}>
+                  Forgot Password?
+                </a>
+              </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="w-4.5 h-4.5 text-slate-400" />
+                  <Lock className="w-4 h-4 text-slate-400" />
                 </div>
                 <input 
-                  type={showPassword ? "text" : "password"} 
+                  type={showPassword ? 'text' : 'password'} 
                   required 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••" 
-                  className="block w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-slate-400 focus:bg-white text-body-md text-slate-900 placeholder-slate-400/80 outline-none transition-all"
+                  className="block w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-all font-medium shadow-sm"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-700 cursor-pointer"
-                  title={showPassword ? "Hide password" : "Show password"}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-800 transition-colors cursor-pointer"
+                  title={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
-            {/* Remember Me & Forgot Password */}
-            <div className="flex items-center justify-between text-xs font-semibold">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 text-primary focus:ring-primary border-slate-200 rounded bg-slate-50 cursor-pointer"
-                />
-                <span className="text-text-secondary hover:text-slate-800 transition-colors select-none">Remember me</span>
+            {/* Remember Me */}
+            <div className="flex items-center py-1">
+              <input 
+                id="remember-me-checkbox" 
+                type="checkbox" 
+                checked={rememberMe}
+                onChange={() => setRememberMe(!rememberMe)}
+                className="h-4 w-4 text-slate-900 focus:ring-slate-900 border-slate-300 rounded cursor-pointer accent-slate-900"
+              />
+              <label htmlFor="remember-me-checkbox" className="ml-2.5 block text-xs text-slate-500 font-semibold cursor-pointer select-none">
+                Remember my session on this device
               </label>
-              <a href="#" className="text-primary hover:underline" onClick={(e) => {
-                e.preventDefault();
-                addToast('Password reset email feature is in demo mode.', 'info');
-              }}>
-                Forgot Password?
-              </a>
             </div>
 
-            {/* Primary Sign In Button */}
+            {/* Role Switcher */}
+            <div className="pt-1">
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Select Access Type</label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { key: 'authority', label: '🏛 Authority' },
+                  { key: 'maintenance', label: '👷 Maintenance Team' },
+                  { key: 'citizen', label: '👤 Citizen' }
+                ].map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => {
+                      const key = opt.key as 'authority' | 'maintenance' | 'citizen';
+                      setRole(key);
+                      if (key === 'authority') {
+                        setEmail('authority@roadwatch.gov');
+                      } else if (key === 'maintenance') {
+                        setEmail('maintenance@roadwatch.gov');
+                      } else {
+                        setEmail('citizen@gmail.com');
+                      }
+                      setPassword('123456');
+                    }}
+                    className={`py-2.5 rounded-lg border text-[10px] font-black text-center transition-all cursor-pointer select-none ${
+                      role === opt.key 
+                        ? 'border-slate-900 bg-slate-900 text-white shadow-sm' 
+                        : 'border-slate-200 hover:border-slate-400 text-slate-500 hover:text-slate-800 bg-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Sign In Submit Button */}
             <button 
               type="submit" 
-              disabled={isLoading}
-              className="w-full flex justify-center items-center py-2.5 px-4 bg-safety-yellow text-primary rounded-lg text-sm font-bold shadow-sm hover:opacity-90 active:scale-[0.98] transition-all duration-150 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+              disabled={isAuthenticating}
+              className="w-full flex justify-center items-center py-3.5 px-4 border border-transparent rounded-xl text-white bg-slate-900 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900 text-xs font-bold transition-all shadow-md cursor-pointer active:scale-[0.99] disabled:opacity-50"
             >
-              {isLoading ? (
+              {isAuthenticating ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
                   Authenticating...
                 </>
-              ) : (
-                'Sign In'
-              )}
+              ) : 'Sign In'}
             </button>
           </form>
 
-          {/* Social Sign In Divider */}
-          <div className="relative my-5">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-100"></div>
-            </div>
-            <div className="relative flex justify-center text-[10px] uppercase font-black tracking-wider">
-              <span className="bg-white px-3 text-slate-450">Or continue with</span>
-            </div>
+          {/* Testing info helper */}
+          <div className="mt-5 p-3.5 bg-slate-50 rounded-xl border border-slate-200/60 text-[10px] text-slate-500 leading-relaxed font-semibold">
+            <span className="font-bold text-slate-800 block mb-0.5">Quick Testing Tips:</span>
+            Use any email/pass combination. To trigger error testing states:
+            <ul className="list-disc pl-3.5 mt-1 font-semibold space-y-0.5">
+              <li>Input <code className="text-red-655 font-bold">unknown@roadwatch.gov</code> for Account Not Found.</li>
+              <li>Input <code className="text-red-655 font-bold">network@roadwatch.gov</code> for Network Error.</li>
+              <li>Enter a short password (&lt;6 chars) for Incorrect Password.</li>
+            </ul>
           </div>
-
-          {/* Google Sign In Button */}
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={isLoading}
-            className="w-full flex justify-center items-center py-2 px-4 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-800 font-bold transition-all active:scale-[0.98] text-xs gap-2 cursor-pointer disabled:opacity-50"
-          >
-            <svg className="w-4.5 h-4.5" viewBox="0 0 24 24">
-              <path
-                fill="#EA4335"
-                d="M12 5.04c1.62 0 3.08.56 4.22 1.65l3.15-3.15C17.45 1.84 14.93 1 12 1 7.37 1 3.48 3.67 1.63 7.57l3.78 2.93c.88-2.65 3.37-4.46 6.59-4.46z"
-              />
-              <path
-                fill="#4285F4"
-                d="M23.45 12.3c0-.82-.07-1.6-.21-2.3H12v4.4h6.43c-.28 1.44-1.1 2.67-2.33 3.5l3.6 2.8c2.1-1.94 3.75-5.2 3.75-8.4z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.41 14.5l-3.78 2.93c1.85 3.9 5.74 6.57 10.37 6.57 2.93 0 5.4-.97 7.2-2.63l-3.6-2.8c-.98.66-2.23 1.07-3.6 1.07-3.22 0-5.71-1.81-6.59-4.46L5.41 14.5z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c3.24 0 5.97-1.07 7.96-2.93l-3.6-2.8c-.98.66-2.23 1.07-3.6 1.07-3.22 0-5.71-1.81-6.59-4.46L1.63 10.97l-3.78 2.93C1.63 20.33 7.37 23 12 23z"
-              />
-            </svg>
-            <span>Continue with Google</span>
-          </button>
-
-          {/* Footer Security / Trust Indicators */}
-          <div className="mt-8 border-t border-slate-100 pt-5 flex items-center justify-center gap-4 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-            <span className="flex items-center gap-1 shrink-0">
-              <Lock className="w-3 h-3" /> Secure Auth
-            </span>
-            <span className="w-1 h-1 bg-slate-300 rounded-full shrink-0"></span>
-            <span className="flex items-center gap-1 shrink-0">
-              <Cloud className="w-3 h-3" /> Firebase Protected
-            </span>
-            <span className="w-1 h-1 bg-slate-300 rounded-full shrink-0"></span>
-            <span className="flex items-center gap-1 shrink-0">
-              <Zap className="w-3 h-3" /> Real-Time
-            </span>
-          </div>
-
         </div>
-      </main>
 
+        {/* Security indicators */}
+        <div className="w-full max-w-md mt-6 flex items-center justify-between text-[9px] text-slate-400 uppercase font-black tracking-widest gap-2 px-2">
+          <span className="flex items-center gap-1">🔒 Secure Authentication</span>
+          <span className="flex items-center gap-1">☁ Firebase Protected</span>
+          <span className="flex items-center gap-1">⚡ Real-Time Monitoring Platform</span>
+        </div>
+      </div>
     </div>
   );
 }

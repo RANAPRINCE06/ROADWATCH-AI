@@ -56,7 +56,12 @@ export function Landing() {
 
       {/* SECTION 1 — HERO */}
       <header className="relative pt-32 pb-20 overflow-hidden bg-gradient-to-b from-blue-50 to-cyan-50 border-b border-slate-200">
-        <div className="max-w-[1280px] mx-auto px-8 grid lg:grid-cols-12 gap-12 items-center">
+        {/* Background image with 80% transparency (20% opacity) */}
+        <div 
+          className="absolute inset-0 z-0 pointer-events-none opacity-20 bg-cover bg-center"
+          style={{ backgroundImage: "url('/road_construction.jpeg')" }}
+        />
+        <div className="relative z-10 max-w-[1280px] mx-auto px-8 grid lg:grid-cols-12 gap-12 items-center">
           <div className="space-y-6 lg:col-span-5 text-left animate-fade-in-up">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-slate-200">
               <span className="flex h-2 w-2 rounded-full bg-blue-600"></span>
@@ -826,7 +831,7 @@ export function Landing() {
               <div className="bg-white border border-slate-200 p-4 rounded-lg flex items-center gap-3 hover:-translate-y-1 hover:shadow-md transition-all duration-300">
                 <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-bold text-sm shrink-0">P</div>
                 <div>
-                  <p className="font-semibold text-sm text-slate-900">Prince</p>
+                  <p className="font-semibold text-sm text-slate-900">Prince <span className="text-xs text-slate-500 font-normal ml-1">(Team Lead.)</span></p>
                   <p className="text-[10px] text-slate-500">Core Developer</p>
                 </div>
               </div>
