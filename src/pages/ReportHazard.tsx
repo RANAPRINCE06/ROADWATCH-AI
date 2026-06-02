@@ -1,17 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { addReport } from '../utils/storage';
-import { 
-  UploadCloud, 
-  Camera, 
-  AlertCircle, 
-  Droplets, 
-  Minus, 
-  Navigation, 
-  CircleEllipsis, 
-  Send, 
-  CheckCircle2, 
-  Loader2, 
-  RefreshCw, 
+import {
+  UploadCloud,
+  Camera,
+  AlertCircle,
+  Droplets,
+  Minus,
+  Navigation,
+  CircleEllipsis,
+  Send,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
   Trash2,
   AlertTriangle,
   LightbulbOff,
@@ -35,16 +35,17 @@ interface AIResult {
 
 export function ReportHazard() {
   const [selectedHazard, setSelectedHazard] = useState('Pothole');
+  const [customHazard, setCustomHazard] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   // File Upload and AI analysis state
   const defaultImageSrc = "https://lh3.googleusercontent.com/aida-public/AB6AXuA1n2NbFoToVIImEahvIZSjTkMR5FTXSWp5f0i44_rrN5OvxYZLRQ_oNqHNxD3sFB-nDpXmafydIW44x-pnxEFZG9bTuaUC6E2Qt_awUiMo8OM0fbzOUqk7HhlTxKafEzP_X_VkroxOJSzIaL3Z27pmQJDihdjtMz-DvYmpv8IeGrNo62FAq_HL7QQSiFfc5J1X3gig8LmGziPIjg9wkvs06EaejGoBkfC6jKHwVCzUkDjo2td8nMsT0y4VsHXyeNU5RqZ8SIWc48Q";
-  
+
   const defaultAiResult: AIResult = {
     hazardType: 'Pothole',
-    severityScore: 8.4,
-    confidence: 98,
+    severityScore: 0.0,
+    confidence: 0,
     urgency: 'Immediate (Within 24hrs)',
     detections: [
       { label: 'Pothole', severity: 'Critical', box_2d: [25, 20, 60, 60] },
@@ -59,6 +60,25 @@ export function ReportHazard() {
   const [aiResult, setAiResult] = useState<AIResult>(defaultAiResult);
   const [isMock, setIsMock] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Validation error state for invalid/unrelated uploads or API errors
+  const [validationError, setValidationError] = useState<{
+    title: string;
+    message: string;
+    type: 'invalid_image' | 'unsupported_file' | 'camera_error' | 'api_error';
+  } | null>(null);
+
+  // Helper to validate filenames in mock mode
+  const isFilenameInvalid = (filename: string): boolean => {
+    const invalidKeywords = [
+      'cat', 'dog', 'person', 'selfie', 'food', 'invalid', 'avatar',
+      'profile', 'logo', 'sunset', 'room', 'house', 'flower', 'tree',
+      'building', 'text', 'screenshot', 'document', 'meme', 'toy',
+      'indoor', 'office', 'desk', 'laptop', 'phone', 'computer'
+    ];
+    const lowerName = filename.toLowerCase();
+    return invalidKeywords.some(keyword => lowerName.includes(keyword));
+  };
 
   // Camera states
   const [cameraActive, setCameraActive] = useState(false);
@@ -116,7 +136,7 @@ export function ReportHazard() {
             const city = address.city || address.town || address.village || address.suburb || address.county || '';
             const state = address.state || '';
             const country = address.country || '';
-            
+
             let label = '';
             if (city && state) {
               label = `${city}, ${state}`;
@@ -163,13 +183,31 @@ export function ReportHazard() {
   // If using local mock analysis, rerun when category changes on an uploaded image
   useEffect(() => {
     if (imageSrc && isMock && !isAnalyzing) {
-      runMockAnalysis(selectedHazard);
+      runMockAnalysis(selectedHazard === 'Other' && customHazard ? customHazard : selectedHazard);
     }
   }, [selectedHazard]);
+
+  // Keep AI Result in sync with category selection when not analyzing
+  useEffect(() => {
+    if (!isAnalyzing) {
+      if (selectedHazard === 'Other') {
+        setAiResult(prev => ({
+          ...prev,
+          hazardType: customHazard.trim() || 'Other'
+        }));
+      } else {
+        setAiResult(prev => ({
+          ...prev,
+          hazardType: selectedHazard
+        }));
+      }
+    }
+  }, [selectedHazard, customHazard, isAnalyzing]);
 
   // Open Camera
   const startCamera = async () => {
     setCameraActive(true);
+    setValidationError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' }
@@ -180,7 +218,11 @@ export function ReportHazard() {
       }
     } catch (err) {
       console.error("Camera access error:", err);
-      alert("Could not access your camera. Please ensure permissions are granted.");
+      setValidationError({
+        title: "Camera Access Error",
+        message: "Could not access your camera. Please ensure permissions are granted in your browser settings.",
+        type: "camera_error"
+      });
       setCameraActive(false);
     }
   };
@@ -201,14 +243,14 @@ export function ReportHazard() {
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 480;
-      
+
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
         setImageSrc(dataUrl);
         stopCamera();
-        triggerAnalysis(dataUrl);
+        triggerAnalysis(dataUrl, 'captured_photo.jpg');
       }
     }
   };
@@ -243,7 +285,11 @@ export function ReportHazard() {
 
   const processFile = (file: File) => {
     if (!file.type.startsWith('image/')) {
-      alert("Please upload an image file (PNG, JPG, JPEG).");
+      setValidationError({
+        title: "Unsupported File Format",
+        message: "Please upload an image file (PNG, JPG, JPEG).",
+        type: "unsupported_file"
+      });
       return;
     }
     const reader = new FileReader();
@@ -251,7 +297,7 @@ export function ReportHazard() {
       if (event.target?.result) {
         const src = event.target.result as string;
         setImageSrc(src);
-        triggerAnalysis(src);
+        triggerAnalysis(src, file.name);
       }
     };
     reader.readAsDataURL(file);
@@ -263,13 +309,35 @@ export function ReportHazard() {
     setAiResult(defaultAiResult);
     setSubmitted(false);
     setIsMock(true);
+    setSelectedHazard('Pothole');
+    setCustomHazard('');
+    setValidationError(null);
   };
 
   // Run AI Analysis
-  const triggerAnalysis = (src: string) => {
+  const triggerAnalysis = (src: string, filename?: string) => {
     setSubmitted(false);
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (apiKey && apiKey.trim() !== "") {
+    setValidationError(null);
+
+    // Check filename for mock invalid cases first
+    if (filename && isFilenameInvalid(filename)) {
+      setIsAnalyzing(true);
+      setAnalysisLog("Analyzing uploaded evidence...");
+      setTimeout(() => {
+        setValidationError({
+          title: "Invalid Image Warning",
+          message: `The uploaded file "${filename}" does not appear to contain road damage, road hazards, or traffic infrastructure. To ensure report quality, please upload valid visual evidence.`,
+          type: "invalid_image"
+        });
+        setImageSrc(null);
+        setAiResult(defaultAiResult);
+        setIsAnalyzing(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }, 1200);
+      return;
+    }    const rawApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = (rawApiKey || "").replace(/^["']|["']$/g, "").trim();
+    if (apiKey !== "") {
       runGeminiAnalysis(src, apiKey);
     } else {
       runMockAnalysis(selectedHazard);
@@ -279,7 +347,7 @@ export function ReportHazard() {
   // Real Gemini API call
   const runGeminiAnalysis = async (src: string, apiKey: string) => {
     setIsAnalyzing(true);
-    setAnalysisLog("Sending payload to Gemini 2.5 Flash...");
+    setAnalysisLog("Sending payload to Gemini AI...");
 
     try {
       const mimeType = src.split(';')[0].split(':')[1] || 'image/jpeg';
@@ -299,12 +367,17 @@ export function ReportHazard() {
                   }
                 },
                 {
-                  text: `Perform a professional civil engineering inspection of this road image.
-Carefully scan the road surface and surrounding infrastructure to locate and identify hazards (potholes, cracks, waterlogging/puddles, missing lane dividers, failed traffic lights, or road spills).
+                  text: `You are an AI civil engineering inspector. First, determine if this image is relevant to road damage, road hazards, or traffic infrastructure (e.g. roads, streets, highways, traffic signs/signals, lane dividers, waterlogging, spillage, potholes, or construction zones).
+Set 'isRoadHazardImage' to true if it is relevant.
+Set 'isRoadHazardImage' to false if the image is unrelated (e.g. portraits, selfies, animals, indoor rooms, food, documents, arbitrary objects, screenshots, logos, etc.).
+
+If 'isRoadHazardImage' is true, carefully scan the road surface and surrounding infrastructure to locate and identify hazards (potholes, cracks, waterlogging/puddles, missing lane dividers, failed traffic lights, or road spills).
 For each detected hazard:
 - Focus on drawing extremely tight, pixel-accurate bounding boxes.
 - Calculate exact integer percentage coordinates [ymin, xmin, ymax, xmax] (0 to 100) representing height/width positions on the image.
-- Classify severity and explain the hazard detail in the description.`
+- Classify severity and explain the hazard detail in the description.
+
+If 'isRoadHazardImage' is false, populate the remaining fields with default values: 'hazardType' as 'Other', 'severityScore' as 0.0, 'confidence' as 0, 'urgency' as 'Low (Routine)', 'detections' as an empty array [], and 'description' explaining why the image is invalid.`
                 }
               ]
             }
@@ -314,6 +387,10 @@ For each detected hazard:
             responseSchema: {
               type: "OBJECT",
               properties: {
+                isRoadHazardImage: {
+                  type: "BOOLEAN",
+                  description: "True if the image contains road damage, road hazards, traffic issues, streets, highways, divider, traffic signal, waterlogging, or other road-related infrastructure. False if the image is invalid and does not show road hazards or road-related infrastructure."
+                },
                 hazardType: {
                   type: "STRING",
                   enum: ["Pothole", "Waterlogging", "Missing Divider", "Traffic Signal", "Spillage", "Other"]
@@ -358,23 +435,43 @@ For each detected hazard:
                   description: "Actionable summary detailing all detected anomalies and their threat level."
                 }
               },
-              required: ["hazardType", "severityScore", "confidence", "urgency", "detections", "description"]
+              required: ["isRoadHazardImage", "hazardType", "severityScore", "confidence", "urgency", "detections", "description"]
             }
           }
         })
       });
 
       if (!response.ok) {
-        throw new Error(`API returned status ${response.status}`);
+        let errMsg = `API returned status ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData?.error?.message) {
+            errMsg = errData.error.message;
+          }
+        } catch (_) {}
+        throw new Error(errMsg);
       }
 
       const data = await response.json();
       const textResponse = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      
+
       // Extract pure JSON from markdown if necessary
       const cleanJson = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJson);
-      
+
+      // Check if image is valid road hazard image
+      if (parsed.isRoadHazardImage === false) {
+        setValidationError({
+          title: "Invalid Image Warning",
+          message: parsed.description || "The uploaded image does not appear to contain road damage, road hazards, or traffic infrastructure. Please upload a valid image.",
+          type: "invalid_image"
+        });
+        setImageSrc(null);
+        setAiResult(defaultAiResult);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
       setAiResult({
         hazardType: parsed.hazardType || selectedHazard,
         severityScore: parsed.severityScore || 5.0,
@@ -383,19 +480,27 @@ For each detected hazard:
         detections: parsed.detections || [],
         description: parsed.description || "AI analysis completed."
       });
-      
+
       // Auto-select detected hazard type
       if (parsed.hazardType) {
         const matchingType = hazardTypes.find(h => h.name.toLowerCase() === parsed.hazardType.toLowerCase());
         if (matchingType) {
           setSelectedHazard(matchingType.name);
+          setCustomHazard('');
+        } else {
+          setSelectedHazard('Other');
+          setCustomHazard(parsed.hazardType);
         }
       }
 
       setIsMock(false);
-    } catch (error) {
-      console.error("Gemini API error, falling back to mock:", error);
-      runMockAnalysis(selectedHazard);
+    } catch (error: any) {
+      console.error("Gemini API error:", error);
+      setValidationError({
+        title: "Gemini AI API Error",
+        message: error.message || "An unexpected error occurred while communicating with the Gemini AI service. Please verify your API key and network connection.",
+        type: "api_error"
+      });
     } finally {
       setIsAnalyzing(false);
     }
@@ -495,8 +600,10 @@ For each detected hazard:
     setIsSubmitting(true);
 
     // Map selections & AI Results to Dashboard fields
-    const category = aiResult?.hazardType || selectedHazard;
-    
+    const category = selectedHazard === 'Other' && customHazard.trim() !== ''
+      ? customHazard.trim()
+      : (aiResult?.hazardType || selectedHazard);
+
     let icon: 'alert' | 'lightbulb' | 'hardhat' | 'car' | 'droplets' = 'alert';
     let severity: 'Critical' | 'Active' | 'Pending' | 'Scheduled' = 'Active';
     let imageUrl = imageSrc || 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80';
@@ -564,7 +671,7 @@ For each detected hazard:
           <p className="text-text-secondary mt-1">Real-time AI-assisted safety reporting system.</p>
         </div>
         {gpsStatus === 'EDITING' ? (
-          <form 
+          <form
             onSubmit={(e) => {
               e.preventDefault();
               if (tempLocation.trim()) {
@@ -575,7 +682,7 @@ For each detected hazard:
             }}
             className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg border border-border-subtle shadow-sm"
           >
-            <input 
+            <input
               type="text"
               value={tempLocation}
               onChange={(e) => setTempLocation(e.target.value)}
@@ -586,8 +693,8 @@ For each detected hazard:
             <button type="submit" className="text-xs bg-primary text-white px-3 py-1 rounded font-bold hover:opacity-90 transition-all">
               Save
             </button>
-            <button 
-              type="button" 
+            <button
+              type="button"
               onClick={() => setGpsStatus('ACTIVE')}
               className="text-xs text-on-surface-variant hover:text-primary transition-colors"
             >
@@ -596,27 +703,26 @@ For each detected hazard:
           </form>
         ) : (
           <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg border border-border-subtle shadow-sm">
-            <div className={`w-2 h-2 rounded-full ${
-              gpsStatus === 'ACTIVE' ? 'bg-green-500 animate-pulse' :
-              gpsStatus === 'FETCHING' ? 'bg-yellow-500 animate-ping' : 'bg-red-500'
-            }`}></div>
+            <div className={`w-2 h-2 rounded-full ${gpsStatus === 'ACTIVE' ? 'bg-green-500 animate-pulse' :
+                gpsStatus === 'FETCHING' ? 'bg-yellow-500 animate-ping' : 'bg-red-500'
+              }`}></div>
             <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
               {gpsStatus === 'ACTIVE' ? 'GPS AUTO-DETECTION: ACTIVE' :
-               gpsStatus === 'FETCHING' ? 'GPS AUTO-DETECTION: FETCHING...' : 'GPS AUTO-DETECTION: FAILED'}
+                gpsStatus === 'FETCHING' ? 'GPS AUTO-DETECTION: FETCHING...' : 'GPS AUTO-DETECTION: FAILED'}
             </span>
             <span className="text-sm font-bold text-primary border-l border-r px-3 mx-1">
               {locationName} {coordinates && `(${coordinates})`}
             </span>
             <div className="flex gap-2">
               {gpsStatus === 'ERROR' && (
-                <button 
+                <button
                   onClick={fetchUserLocation}
                   className="text-primary hover:underline text-sm font-semibold flex items-center gap-1 mr-2"
                 >
                   Retry
                 </button>
               )}
-              <button 
+              <button
                 onClick={() => {
                   setTempLocation(locationName);
                   setGpsStatus('EDITING');
@@ -632,42 +738,41 @@ For each detected hazard:
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-7 space-y-8">
-          
+
           {/* File Upload Area */}
-          <section 
+          <section
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={handleFileSelect}
-            className={`bg-white/50 backdrop-blur p-8 rounded-xl border-dashed border-2 transition-all cursor-pointer flex flex-col items-center justify-center min-h-[320px] group relative ${
-              isDragging ? 'border-safety-yellow bg-yellow-50/20' : 'border-outline-variant hover:border-primary'
-            }`}
+            className={`bg-white/50 backdrop-blur p-8 rounded-xl border-dashed border-2 transition-all cursor-pointer flex flex-col items-center justify-center min-h-[320px] group relative ${isDragging ? 'border-safety-yellow bg-yellow-50/20' : 'border-outline-variant hover:border-primary'
+              }`}
           >
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleFileChange} 
-              className="hidden" 
-              accept="image/*" 
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              className="hidden"
+              accept="image/*"
             />
-            
+
             <div className="w-16 h-16 bg-surface-container rounded-full flex items-center justify-center mb-4 group-hover:bg-primary group-hover:text-white transition-all">
               <UploadCloud className="w-8 h-8" />
             </div>
-            
+
             <h3 className="text-xl font-bold text-primary">Upload Visual Evidence</h3>
             <p className="text-on-surface-variant text-sm mt-2 text-center max-w-md">
               Drag and drop high-resolution images or click to select files. Our AI will automatically analyze the content for hazard detection.
             </p>
-            
+
             <div className="mt-6 flex gap-3" onClick={(e) => e.stopPropagation()}>
-              <button 
+              <button
                 onClick={handleFileSelect}
                 className="bg-primary text-white px-6 py-2.5 rounded-lg font-bold hover:opacity-90 active:scale-95 transition-all"
               >
                 Select Files
               </button>
-              <button 
+              <button
                 onClick={startCamera}
                 className="border border-outline-variant text-primary px-6 py-2.5 rounded-lg font-bold hover:bg-surface-container-low active:scale-95 transition-all flex items-center gap-2 bg-white"
               >
@@ -681,7 +786,7 @@ For each detected hazard:
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-[11px] font-bold text-on-surface-variant tracking-widest uppercase">Select Hazard Category</h3>
               {imageSrc && (
-                <button 
+                <button
                   onClick={handleReset}
                   className="text-xs flex items-center gap-1.5 text-red-500 hover:text-red-700 font-bold uppercase transition-colors"
                 >
@@ -689,21 +794,72 @@ For each detected hazard:
                 </button>
               )}
             </div>
-            
+
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {hazardTypes.map((type) => (
                 <button
                   key={type.name}
-                  onClick={() => setSelectedHazard(type.name)}
-                  className={`p-4 rounded-lg bg-white flex flex-col items-center gap-3 transition-all border ${
-                    selectedHazard === type.name ? 'border-safety-yellow bg-yellow-50/50 shadow-sm' : 'border-border-subtle hover:border-safety-yellow'
-                  }`}
+                  onClick={() => {
+                    setSelectedHazard(type.name);
+                    if (type.name !== 'Other') {
+                      setCustomHazard('');
+                    }
+                  }}
+                  className={`p-4 rounded-lg bg-white flex flex-col items-center gap-3 transition-all border ${selectedHazard === type.name ? 'border-safety-yellow bg-yellow-50/50 shadow-sm' : 'border-border-subtle hover:border-safety-yellow'
+                    }`}
                 >
                   <type.icon className={`w-7 h-7 ${selectedHazard === type.name ? 'text-safety-yellow' : 'text-primary'}`} />
                   <span className="text-sm font-bold text-primary">{type.name}</span>
                 </button>
               ))}
             </div>
+
+            {selectedHazard === 'Other' && (
+              <div className="mt-4 p-5 bg-white rounded-xl border border-border-subtle shadow-sm animate-fade-in-up">
+                <label htmlFor="custom-category-input" className="block text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Specify Custom Category
+                </label>
+                <div className="relative mb-4">
+                  <input
+                    id="custom-category-input"
+                    type="text"
+                    value={customHazard}
+                    onChange={(e) => setCustomHazard(e.target.value)}
+                    placeholder="e.g. Debris, Animal Crossing, Construction Barrier..."
+                    className="w-full px-4 py-3.5 bg-surface-bright border border-border-subtle rounded-lg text-sm text-primary placeholder-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-safety-yellow focus:border-transparent transition-all font-semibold"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-wider mb-2">
+                    Common Suggestions:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      'Debris on Road',
+                      'Fallen Tree',
+                      'Landslide / Mudslide',
+                      'Construction Barrier',
+                      'Damaged Guardrail',
+                      'Pavement Crack',
+                      'Illegal Parking'
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => setCustomHazard(suggestion)}
+                        className={`text-[11px] px-3 py-1.5 rounded-full border transition-all font-semibold cursor-pointer ${customHazard === suggestion
+                            ? 'bg-safety-yellow/20 border-safety-yellow text-primary'
+                            : 'bg-surface-bright border-border-subtle text-on-surface-variant hover:border-safety-yellow hover:text-primary'
+                          }`}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         </div>
 
@@ -718,23 +874,23 @@ For each detected hazard:
                 </span>
               )}
             </div>
-            
+
             <div className="glass-panel rounded-xl overflow-hidden relative shadow-lg bg-white">
-              
+
               {/* Image & Bounding Box Overlays */}
               <div className="relative group bg-surface-dim aspect-[4/3] flex items-center justify-center overflow-hidden">
-                <img 
-                  src={imageSrc || defaultImageSrc} 
+                <img
+                  src={imageSrc || defaultImageSrc}
                   alt="AI detection preview"
                   className="w-full h-full object-cover"
                 />
-                
+
                 {/* Scanner Overlay during Analysis */}
                 {isAnalyzing && (
                   <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center p-4">
                     <Loader2 className="w-10 h-10 text-safety-yellow animate-spin mb-3" />
                     <p className="text-white font-bold text-sm text-center">{analysisLog}</p>
-                    <div 
+                    <div
                       className="absolute left-0 right-0 h-1 bg-safety-yellow shadow-[0_0_10px_var(--color-safety-yellow)] pointer-events-none"
                       style={{ animation: 'scan 2s ease-in-out infinite' }}
                     />
@@ -744,7 +900,7 @@ For each detected hazard:
                 {/* Simulated / Real Bounding Boxes */}
                 {!isAnalyzing && aiResult && aiResult.detections && aiResult.detections.map((det, idx) => {
                   const [ymin, xmin, ymax, xmax] = det.box_2d || [0, 0, 0, 0];
-                  
+
                   const severityColors = {
                     Critical: 'border-red-600 bg-red-500/10 text-red-600',
                     High: 'border-orange-500 bg-orange-500/10 text-orange-500',
@@ -763,7 +919,7 @@ For each detected hazard:
                   const badgeClass = badgeColors[det.severity] || badgeColors.Medium;
 
                   return (
-                    <div 
+                    <div
                       key={idx}
                       className={`absolute border-2 rounded-sm transition-all duration-300 ${colorClass}`}
                       style={{
@@ -780,7 +936,7 @@ For each detected hazard:
                   );
                 })}
               </div>
-              
+
               {/* Metadata details */}
               <div className="p-6 space-y-6">
                 <div className="grid grid-cols-2 gap-4">
@@ -793,13 +949,13 @@ For each detected hazard:
                       <span className="text-sm font-bold text-on-surface-variant mb-1">/ 10</span>
                     </div>
                     <div className="w-full h-1.5 bg-outline-variant mt-4 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-safety-yellow transition-all duration-500" 
+                      <div
+                        className="h-full bg-safety-yellow transition-all duration-500"
                         style={{ width: isAnalyzing ? '0%' : `${(aiResult?.severityScore || 0) * 10}%` }}
                       ></div>
                     </div>
                   </div>
-                  
+
                   <div className="bg-surface-container-low p-4 rounded-lg">
                     <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Detection Confidence</p>
                     <div className="flex items-end gap-2 mt-1">
@@ -808,10 +964,17 @@ For each detected hazard:
                       </span>
                       <span className="text-sm font-bold text-on-surface-variant mb-1">%</span>
                     </div>
-                    <div className="flex items-center gap-1.5 mt-4 text-green-600">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span className="text-[11px] font-bold uppercase tracking-wide">High Reliability</span>
-                    </div>
+                    {aiResult?.confidence > 0 ? (
+                      <div className="flex items-center gap-1.5 mt-4 text-green-600">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span className="text-[11px] font-bold uppercase tracking-wide">High Reliability</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 mt-4 text-on-surface-variant/40">
+                        <AlertCircle className="w-4 h-4" />
+                        <span className="text-[11px] font-bold uppercase tracking-wide">Awaiting Analysis</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -822,22 +985,21 @@ For each detected hazard:
                   </div>
                   <AlertCircle className="text-safety-yellow w-8 h-8 flex-shrink-0" />
                 </div>
-                
+
                 {aiResult?.description && !isAnalyzing && (
                   <div className="p-3 bg-surface-container-low border border-border-subtle rounded-lg text-xs text-on-surface-variant leading-relaxed">
                     <span className="font-bold block mb-1">AI Report Summary:</span>
                     {aiResult.description}
                   </div>
                 )}
-                
-                <button 
-                  onClick={handleSubmit} 
+
+                <button
+                  onClick={handleSubmit}
                   disabled={isSubmitting || submitted || isAnalyzing}
-                  className={`w-full font-bold py-4 rounded-lg text-lg flex items-center justify-center gap-3 shadow-md transition-all ${
-                    submitted 
-                      ? 'bg-green-500 text-white' 
+                  className={`w-full font-bold py-4 rounded-lg text-lg flex items-center justify-center gap-3 shadow-md transition-all ${submitted
+                      ? 'bg-green-500 text-white'
                       : 'bg-safety-yellow text-primary hover:scale-[1.01] active:scale-[0.98] disabled:opacity-50'
-                  }`}
+                    }`}
                 >
                   {isSubmitting ? 'Processing...' : submitted ? 'Report Submitted' : 'Submit Report'}
                   {!isSubmitting && !submitted && <Send className="w-5 h-5" />}
@@ -867,43 +1029,121 @@ For each detected hazard:
               <h3 className="font-bold flex items-center gap-2">
                 <Camera className="w-5 h-5 text-safety-yellow" /> Live Camera Stream
               </h3>
-              <button 
+              <button
                 onClick={stopCamera}
                 className="text-white/80 hover:text-white text-sm font-semibold"
               >
                 Cancel
               </button>
             </div>
-            
+
             <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
-              <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline 
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
                 className="w-full h-full object-cover"
               />
               {/* HUD scanlines grid overlay for aesthetic */}
               <div className="absolute inset-0 border border-white/10 pointer-events-none">
-                <div 
+                <div
                   className="w-full h-0.5 bg-safety-yellow/50 absolute top-1/2 left-0 pointer-events-none"
                   style={{ animation: 'scan 3s ease-in-out infinite' }}
                 />
               </div>
             </div>
-            
+
             <div className="p-4 flex justify-center gap-3 bg-surface-container-low">
-              <button 
+              <button
                 onClick={capturePhoto}
                 className="bg-safety-yellow text-primary px-6 py-2.5 rounded-lg font-bold hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2"
               >
                 <Camera className="w-5 h-5" /> Take Photo
               </button>
-              <button 
+              <button
                 onClick={stopCamera}
                 className="border border-outline-variant text-primary px-6 py-2.5 rounded-lg font-bold hover:bg-surface-container-high transition-all"
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Validation Error Modal Overlay */}
+      {validationError && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl overflow-hidden shadow-2xl border border-red-100 max-w-md w-full animate-scale-up">
+            <div className="p-6 bg-gradient-to-r from-red-500/10 to-orange-500/10 border-b border-red-100 flex items-start gap-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-red-600 flex-shrink-0">
+                <AlertTriangle className="w-6 h-6 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-lg text-primary">{validationError.title}</h3>
+                <p className="text-xs font-bold text-red-600 uppercase tracking-wider">Validation Failure</p>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <p className="text-sm text-on-surface-variant leading-relaxed font-semibold">
+                {validationError.message}
+              </p>
+
+              {validationError.type === 'api_error' ? (
+                <div className="mt-4 p-4 bg-surface-container-low rounded-xl border border-border-subtle text-[11px] text-on-surface-variant/70 leading-relaxed font-semibold">
+                  <span className="font-bold text-primary block mb-1">Troubleshooting Tips:</span>
+                  1. Check your <code className="bg-surface-bright px-1 py-0.5 rounded border border-border-subtle font-mono text-[10px]">.env</code> file for <code className="bg-surface-bright px-1 py-0.5 rounded border border-border-subtle font-mono text-[10px]">VITE_GEMINI_API_KEY</code>.<br />
+                  2. Ensure there are no extra spaces or quotes around the key.<br />
+                  3. Make sure the Generative Language API is enabled in your Google AI Studio or Cloud Console.<br />
+                  4. Alternatively, click "Use Mock Analysis" to proceed with local simulation.
+                </div>
+              ) : (
+                <div className="mt-4 p-4 bg-surface-container-low rounded-xl border border-border-subtle text-[11px] text-on-surface-variant/70 leading-relaxed font-semibold">
+                  <span className="font-bold text-primary block mb-1">Supported Visual Evidence:</span>
+                  Road surfaces, street hazards, cracks, potholes, divider damage, waterlogging, spillage, or traffic lights.
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 bg-surface-container-low border-t border-border-subtle flex justify-end gap-3">
+              {validationError.type === 'api_error' ? (
+                <>
+                  <button
+                    onClick={() => {
+                      setValidationError(null);
+                      runMockAnalysis(selectedHazard);
+                    }}
+                    className="bg-safety-yellow text-primary px-5 py-2.5 rounded-lg text-xs font-bold hover:opacity-90 active:scale-95 transition-all cursor-pointer shadow-sm"
+                  >
+                    Use Mock Analysis
+                  </button>
+                  <button
+                    onClick={() => setValidationError(null)}
+                    className="border border-outline-variant text-primary px-5 py-2.5 rounded-lg text-xs font-bold hover:bg-surface-container-high transition-all cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      setValidationError(null);
+                      handleFileSelect();
+                    }}
+                    className="bg-primary text-white px-5 py-2.5 rounded-lg text-xs font-bold hover:opacity-90 active:scale-95 transition-all cursor-pointer shadow-sm"
+                  >
+                    Choose Different Image
+                  </button>
+                  <button
+                    onClick={() => setValidationError(null)}
+                    className="border border-outline-variant text-primary px-5 py-2.5 rounded-lg text-xs font-bold hover:bg-surface-container-high transition-all cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
