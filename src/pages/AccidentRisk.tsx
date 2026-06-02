@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertOctagon, TrendingUp, Sparkles, MapPin, Award, CheckCircle2, ShieldAlert, Activity } from 'lucide-react';
+import { getReports, Report } from '../utils/storage';
 
 interface RiskZone {
   id: string;
@@ -17,63 +18,129 @@ interface RiskZone {
 
 export function AccidentRisk() {
   const [selectedZoneId, setSelectedZoneId] = useState<string>('zone-1');
+  const [reports, setReports] = useState<Report[]>(() => getReports());
 
-  const riskZones: RiskZone[] = [
+  useEffect(() => {
+    const handleSync = () => {
+      setReports(getReports());
+    };
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
+
+  const segments = [
     {
       id: 'zone-1',
       roadSegment: 'Orchard Rd Sector 4',
       locationName: 'Sector 4, Orchard Rd',
-      collisionProbability: 92,
-      grade: 'D',
-      contributingFactors: 'Deep asphalt pothole, high transit speed limit (60 km/h), high pedestrian traffic crosswalk.',
-      recommendedCountermeasure: 'Deploy Team Alpha for emergency patch. Install temporary illuminated warning beacons and cap speed limit at 40 km/h.',
-      lat: 1.3048,
-      lng: 103.8318,
-      x: 35,
-      y: 50
+      matchKeys: ['orchard'],
+      defaultLat: 1.3048,
+      defaultLng: 103.8318,
+      defaultX: 35,
+      defaultY: 50,
+      baseCountermeasure: 'Deploy Team Alpha for emergency patch. Install temporary illuminated warning beacons and cap speed limit at 40 km/h.'
     },
     {
       id: 'zone-2',
       roadSegment: 'Bayfront Ave Sliproad',
       locationName: 'Bayfront Ave North',
-      collisionProbability: 76,
-      grade: 'C',
-      contributingFactors: '15cm waterlogging pooling, heavy vehicle blindspot, aggregates spill.',
-      recommendedCountermeasure: 'Execute suction drainage clearance. Deploy emergency warning signage 100m upstream of blindspot.',
-      lat: 1.2847,
-      lng: 103.8590,
-      x: 65,
-      y: 30
+      matchKeys: ['bayfront'],
+      defaultLat: 1.2847,
+      defaultLng: 103.8590,
+      defaultX: 65,
+      defaultY: 30,
+      baseCountermeasure: 'Execute suction drainage clearance. Deploy emergency warning signage 100m upstream of blindspot.'
     },
     {
       id: 'zone-3',
       roadSegment: 'Cross St Eastbound Junction',
       locationName: 'Cross St Junction',
-      collisionProbability: 58,
-      grade: 'B',
-      contributingFactors: 'Utility maintenance work barrier narrowing lanes, flashing lights missing.',
-      recommendedCountermeasure: 'Instruct construction contractors to reinforce barricade reflective guides and deploy safety signalers.',
-      lat: 1.2789,
-      lng: 103.8485,
-      x: 80,
-      y: 75
+      matchKeys: ['cross'],
+      defaultLat: 1.2789,
+      defaultLng: 103.8485,
+      defaultX: 80,
+      defaultY: 75,
+      baseCountermeasure: 'Instruct construction contractors to reinforce barricade reflective guides and deploy safety signalers.'
     },
     {
       id: 'zone-4',
       roadSegment: 'Geylang Rd Lane 3 Intersection',
       locationName: 'Geylang Rd Junction',
-      collisionProbability: 64,
-      grade: 'C',
-      contributingFactors: 'Drain overflow, debris clogging curbside lane, low road friction coefficient.',
-      recommendedCountermeasure: 'Initiate drain flushing. Apply high-friction surfacing treatment (HFST) on intersection approaches.',
-      lat: 1.3120,
-      lng: 103.8760,
-      x: 50,
-      y: 60
+      matchKeys: ['geylang'],
+      defaultLat: 1.3120,
+      defaultLng: 103.8760,
+      defaultX: 50,
+      defaultY: 60,
+      baseCountermeasure: 'Initiate drain flushing. Apply high-friction surfacing treatment (HFST) on intersection approaches.'
     }
   ];
 
+  const riskZones: RiskZone[] = segments.map(seg => {
+    const matchingHazards = reports.filter(r => 
+      !r.resolved && 
+      seg.matchKeys.some(key => r.location.toLowerCase().includes(key) || r.title.toLowerCase().includes(key))
+    );
+
+    let probability = 10;
+    matchingHazards.forEach(h => {
+      if (h.severity === 'Critical') probability += 45;
+      else if (h.severity === 'Active') probability += 25;
+      else probability += 12;
+    });
+
+    probability = Math.min(98, Math.max(10, probability));
+
+    let grade: 'A' | 'B' | 'C' | 'D' | 'F' = 'A';
+    if (probability >= 90) grade = 'F';
+    else if (probability >= 70) grade = 'D';
+    else if (probability >= 50) grade = 'C';
+    else if (probability >= 25) grade = 'B';
+    
+    let contributingFactors = '';
+    if (matchingHazards.length === 0) {
+      contributingFactors = 'No active hazards detected. Segment currently in optimal state with regular sensor monitoring.';
+    } else {
+      const summaries = matchingHazards.map(h => `${h.title} (${h.severity} severity)`).join(', ');
+      contributingFactors = `Active hazards present: ${summaries}. High traffic load and varying pavement friction index.`;
+    }
+
+    const hasCritical = matchingHazards.some(h => h.severity === 'Critical');
+    const recommendedCountermeasure = hasCritical 
+      ? `[IMMEDIATE DISPATCH REQUIRED] ${seg.baseCountermeasure}`
+      : `Monitor telemetry scans. ${seg.baseCountermeasure}`;
+
+    const lat = matchingHazards[0]?.lat || seg.defaultLat;
+    const lng = matchingHazards[0]?.lng || seg.defaultLng;
+    const x = matchingHazards[0]?.x || seg.defaultX;
+    const y = matchingHazards[0]?.y || seg.defaultY;
+
+    return {
+      id: seg.id,
+      roadSegment: seg.roadSegment,
+      locationName: seg.locationName,
+      collisionProbability: probability,
+      grade,
+      contributingFactors,
+      recommendedCountermeasure,
+      lat,
+      lng,
+      x,
+      y
+    };
+  });
+
   const selectedZone = riskZones.find(z => z.id === selectedZoneId) || riskZones[0];
+
+  const criticalSectorsCount = riskZones.filter(z => z.grade === 'F' || z.grade === 'D').length;
+  const avgProbability = riskZones.reduce((acc, curr) => acc + curr.collisionProbability, 0) / riskZones.length;
+  
+  let overallGrade = 'A';
+  if (avgProbability >= 85) overallGrade = 'F';
+  else if (avgProbability >= 70) overallGrade = 'D';
+  else if (avgProbability >= 50) overallGrade = 'C';
+  else if (avgProbability >= 25) overallGrade = 'B-';
 
   return (
     <div className="p-8 max-w-[1440px] mx-auto pb-32 animate-fade-in-up">
@@ -90,7 +157,7 @@ export function AccidentRisk() {
           </div>
           <div>
             <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block">High Danger Risk Zones</span>
-            <span className="text-2xl font-black text-primary mt-0.5">2 Critical Sectors</span>
+            <span className="text-2xl font-black text-primary mt-0.5">{criticalSectorsCount} Critical Sector{criticalSectorsCount === 1 ? '' : 's'}</span>
           </div>
         </div>
 
@@ -100,7 +167,7 @@ export function AccidentRisk() {
           </div>
           <div>
             <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block">Target Risk Mitigation</span>
-            <span className="text-2xl font-black text-primary mt-0.5">-38% Collision Rate</span>
+            <span className="text-2xl font-black text-primary mt-0.5">-{Math.min(88, Math.round(50 - avgProbability / 2))}% Collision Rate</span>
           </div>
         </div>
 
@@ -110,7 +177,7 @@ export function AccidentRisk() {
           </div>
           <div>
             <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block">Overall Road Safety Grade</span>
-            <span className="text-2xl font-black text-primary mt-0.5">Grade: B-</span>
+            <span className="text-2xl font-black text-primary mt-0.5">Grade: {overallGrade}</span>
           </div>
         </div>
       </div>

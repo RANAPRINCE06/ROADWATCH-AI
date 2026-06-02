@@ -205,17 +205,39 @@ export function LiveHeatmap() {
   // Timeline playback state
   const [timelineVal, setTimelineVal] = useState(65);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Shared storage state
   const [reports, setReports] = useState<Report[]>(() => getReports());
+
+  const [filterSeverity, setFilterSeverity] = useState({
+    Critical: true,
+    Active: true,
+    Pending: true,
+    Scheduled: true,
+  });
+
+  const [filterStatus, setFilterStatus] = useState({
+    Detected: true,
+    Verified: true,
+    Assigned: true,
+    Repairing: true,
+    Resolved: false,
+  });
 
   useEffect(() => {
     const handleSync = () => {
       setReports(getReports());
     };
+    const handleSearch = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setSearchQuery(detail || '');
+    };
     window.addEventListener('roadwatch-reports-updated', handleSync);
+    window.addEventListener('roadwatch-search', handleSearch);
     return () => {
       window.removeEventListener('roadwatch-reports-updated', handleSync);
+      window.removeEventListener('roadwatch-search', handleSearch);
     };
   }, []);
 
@@ -230,7 +252,6 @@ export function LiveHeatmap() {
   };
 
   const mappedMarkers = reports
-    .filter(r => !r.resolved)
     .map(r => {
       let type: 'pothole' | 'flooding' | 'obstacle' = 'pothole';
       if (r.icon === 'droplets') type = 'flooding';
@@ -248,6 +269,9 @@ export function LiveHeatmap() {
         title: r.title,
         location: r.location,
         severity,
+        originalSeverity: r.severity || 'Active',
+        status: r.status || (r.resolved ? 'Resolved' : 'Detected'),
+        resolved: !!r.resolved,
         detectedTime: timeStr,
         lat: r.lat || 1.3048,
         lng: r.lng || 103.8318,
@@ -506,10 +530,40 @@ export function LiveHeatmap() {
     if (m.type === 'flooding' && !activeLayers.flooding) return false;
     if (m.type === 'obstacle' && !activeLayers.obstacles) return false;
 
+    // Search query filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const match = m.title.toLowerCase().includes(q) || m.location.toLowerCase().includes(q);
+      if (!match) return false;
+    }
+
+    // Severity filter
+    const sev = m.originalSeverity;
+    if (sev === 'Critical' && !filterSeverity.Critical) return false;
+    if (sev === 'Active' && !filterSeverity.Active) return false;
+    if (sev === 'Pending' && !filterSeverity.Pending) return false;
+    if (sev === 'Scheduled' && !filterSeverity.Scheduled) return false;
+
+    // Status filter
+    const stat = m.status;
+    if (stat === 'Detected' && !filterStatus.Detected) return false;
+    if (stat === 'Verified' && !filterStatus.Verified) return false;
+    if (stat === 'Assigned' && !filterStatus.Assigned) return false;
+    if (stat === 'Repairing' && !filterStatus.Repairing) return false;
+    if (stat === 'Resolved' && !filterStatus.Resolved) return false;
+
     // Timeline time-lapse simulation constraints
-    if (m.id === 'rep-1' && timelineVal < 15) return false; // Orchard Pothole
-    if (m.id === 'rep-2' && timelineVal < 35) return false; // Bayfront Flooding
-    if (m.id === 'rep-5' && timelineVal < 50) return false; // Geylang flood risk
+    if (timelineVal < 100) {
+      const reportDate = new Date(reports.find(r => r.id === m.id)?.timestamp || '');
+      const today = new Date();
+      if (reportDate.toDateString() === today.toDateString()) {
+        const reportMinutes = reportDate.getHours() * 60 + reportDate.getMinutes();
+        const maxMinutes = (timelineVal / 100) * 24 * 60;
+        if (reportMinutes > maxMinutes) {
+          return false;
+        }
+      }
+    }
     
     return true;
   });
@@ -1089,63 +1143,115 @@ export function LiveHeatmap() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="glass-panel p-5 rounded-xl border border-white/20 shadow-lg w-56 text-primary"
+              className="glass-panel p-5 rounded-xl border border-white/20 shadow-lg w-56 text-primary space-y-4"
             >
-              <h4 className="text-[11px] font-bold tracking-widest text-text-secondary uppercase mb-4">Layers</h4>
-              <div className="space-y-3.5 border-b border-border-subtle/50 pb-4 mb-4">
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={activeLayers.potholes} 
-                    onChange={() => setActiveLayers({ ...activeLayers, potholes: !activeLayers.potholes })}
-                    className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
-                  />
-                  <span className={`text-sm font-medium transition-colors ${activeLayers.potholes ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
-                    Potholes
-                  </span>
-                </label>
-                
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={activeLayers.flooding} 
-                    onChange={() => setActiveLayers({ ...activeLayers, flooding: !activeLayers.flooding })}
-                    className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
-                  />
-                  <span className={`text-sm font-medium transition-colors ${activeLayers.flooding ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
-                    Flooding
-                  </span>
-                </label>
+              <div>
+                <h4 className="text-[11px] font-bold tracking-widest text-text-secondary uppercase mb-3">Live Layers</h4>
+                <div className="space-y-2 border-b border-border-subtle/30 pb-3">
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input 
+                      type="checkbox" 
+                      checked={activeLayers.potholes} 
+                      onChange={() => setActiveLayers({ ...activeLayers, potholes: !activeLayers.potholes })}
+                      className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
+                    />
+                    <span className={`text-xs font-medium transition-colors ${activeLayers.potholes ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
+                      Potholes
+                    </span>
+                  </label>
+                  
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input 
+                      type="checkbox" 
+                      checked={activeLayers.flooding} 
+                      onChange={() => setActiveLayers({ ...activeLayers, flooding: !activeLayers.flooding })}
+                      className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
+                    />
+                    <span className={`text-xs font-medium transition-colors ${activeLayers.flooding ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
+                      Flooding
+                    </span>
+                  </label>
 
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={activeLayers.obstacles} 
-                    onChange={() => setActiveLayers({ ...activeLayers, obstacles: !activeLayers.obstacles })}
-                    className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
-                  />
-                  <span className={`text-sm font-medium transition-colors ${activeLayers.obstacles ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
-                    Obstacles
-                  </span>
-                </label>
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input 
+                      type="checkbox" 
+                      checked={activeLayers.obstacles} 
+                      onChange={() => setActiveLayers({ ...activeLayers, obstacles: !activeLayers.obstacles })}
+                      className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
+                    />
+                    <span className={`text-xs font-medium transition-colors ${activeLayers.obstacles ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
+                      Obstacles
+                    </span>
+                  </label>
 
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input 
-                    type="checkbox" 
-                    checked={activeLayers.liveTraffic} 
-                    onChange={() => setActiveLayers({ ...activeLayers, liveTraffic: !activeLayers.liveTraffic })}
-                    className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
-                  />
-                  <span className={`text-sm font-medium transition-colors ${activeLayers.liveTraffic ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
-                    Live Traffic Layer
-                  </span>
-                </label>
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input 
+                      type="checkbox" 
+                      checked={activeLayers.liveTraffic} 
+                      onChange={() => setActiveLayers({ ...activeLayers, liveTraffic: !activeLayers.liveTraffic })}
+                      className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary" 
+                    />
+                    <span className={`text-xs font-medium transition-colors ${activeLayers.liveTraffic ? 'text-primary' : 'text-text-secondary group-hover:text-primary'}`}>
+                      Live Traffic Layer
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-[11px] font-bold tracking-widest text-text-secondary uppercase mb-3">Severity</h4>
+                <div className="grid grid-cols-2 gap-2 text-[10px] border-b border-border-subtle/30 pb-3">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" checked={filterSeverity.Critical} onChange={() => setFilterSeverity({...filterSeverity, Critical: !filterSeverity.Critical})} className="w-3.5 h-3.5 accent-primary rounded" />
+                    <span>Critical</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" checked={filterSeverity.Active} onChange={() => setFilterSeverity({...filterSeverity, Active: !filterSeverity.Active})} className="w-3.5 h-3.5 accent-primary rounded" />
+                    <span>Active</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" checked={filterSeverity.Pending} onChange={() => setFilterSeverity({...filterSeverity, Pending: !filterSeverity.Pending})} className="w-3.5 h-3.5 accent-primary rounded" />
+                    <span>Pending</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" checked={filterSeverity.Scheduled} onChange={() => setFilterSeverity({...filterSeverity, Scheduled: !filterSeverity.Scheduled})} className="w-3.5 h-3.5 accent-primary rounded" />
+                    <span>Sched</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-[11px] font-bold tracking-widest text-text-secondary uppercase mb-3">Status</h4>
+                <div className="space-y-2 text-[10px] border-b border-border-subtle/30 pb-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={filterStatus.Detected} onChange={() => setFilterStatus({...filterStatus, Detected: !filterStatus.Detected})} className="w-3.5 h-3.5 accent-primary rounded" />
+                      <span>Detected</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={filterStatus.Verified} onChange={() => setFilterStatus({...filterStatus, Verified: !filterStatus.Verified})} className="w-3.5 h-3.5 accent-primary rounded" />
+                      <span>Verified</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={filterStatus.Assigned} onChange={() => setFilterStatus({...filterStatus, Assigned: !filterStatus.Assigned})} className="w-3.5 h-3.5 accent-primary rounded" />
+                      <span>Assigned</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={filterStatus.Repairing} onChange={() => setFilterStatus({...filterStatus, Repairing: !filterStatus.Repairing})} className="w-3.5 h-3.5 accent-primary rounded" />
+                      <span>Repairing</span>
+                    </label>
+                  </div>
+                  <label className="flex items-center gap-1.5 cursor-pointer pt-1 border-t border-dashed border-border-subtle/30">
+                    <input type="checkbox" checked={filterStatus.Resolved} onChange={() => setFilterStatus({...filterStatus, Resolved: !filterStatus.Resolved})} className="w-3.5 h-3.5 accent-primary rounded" />
+                    <span>Include Resolved</span>
+                  </label>
+                </div>
               </div>
 
               {/* Map Legend integrated inside Layers card to prevent collisions */}
               <div>
                 <h4 className="text-[11px] font-bold tracking-widest text-text-secondary uppercase mb-2.5">Risk Level</h4>
-                <div className="space-y-2 text-[11px] font-semibold text-text-secondary">
+                <div className="space-y-2 text-[10px] font-semibold text-text-secondary">
                   <div className="flex items-center gap-2.5">
                     <span className="w-3 h-3 rounded-full bg-error shadow-sm shadow-red-500/50"></span>
                     <span className="text-primary font-bold">High Danger</span>

@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getAuth, 
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup, 
   GoogleAuthProvider, 
-  signInWithEmailAndPassword 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
 } from 'firebase/auth';
-
-import { realFirebaseActive, db, setDocument, getDocRef } from '../utils/firebase';
+import { auth, realFirebaseActive, setDocument, getDocRef } from '../utils/firebase';
 import { 
   Mail, 
   Lock, 
@@ -26,11 +25,12 @@ export function Login() {
   const redirect = searchParams.get('redirect');
 
   // Form states
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('authority@roadwatch.gov');
+  const [password, setPassword] = useState('123456');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  
   // Selected access type/role
   const [role, setRole] = useState<'authority' | 'maintenance' | 'citizen'>('authority');
 
@@ -42,6 +42,10 @@ export function Login() {
     const x = ((e.clientX - rect.left) / rect.width - 0.5) * 20;
     const y = ((e.clientY - rect.top) / rect.height - 0.5) * 20;
     setMousePos({ x, y });
+  };
+
+  const handleMouseLeave = () => {
+    setMousePos({ x: 0, y: 0 });
   };
 
   // Error/Toast notifications state
@@ -79,68 +83,95 @@ export function Login() {
     }
   };
 
-  // On mount: handle Google redirect result after returning from accounts.google.com
-  useEffect(() => {
-    if (!realFirebaseActive) return;
-    const auth = getAuth();
-    getRedirectResult(auth)
-      .then(async (result) => {
-        if (!result) return; // No pending redirect — normal page load
-        const user = result.user;
-        // Restore role that was saved before the redirect
-        const savedRole = (localStorage.getItem('roadwatch_pending_google_role') as typeof role) || 'authority';
-        localStorage.removeItem('roadwatch_pending_google_role');
-        // Save role to Firestore (non-blocking)
-        try {
-          const userDocRef = getDocRef('users', user.uid);
-          await setDocument(userDocRef, { email: user.email, role: savedRole });
-        } catch (_) {}
-        // Persist session
-        const sessionUser = { email: user.email, uid: user.uid, role: savedRole, provider: 'google' };
-        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
-        showToast('Google Sign-In successful! Redirecting...', 'success');
-        setTimeout(() => routeUser(savedRole), 1200);
-      })
-      .catch((err) => {
-        // auth/no-auth-event fires on every normal page load — ignore it
-        if (err?.code && err.code !== 'auth/no-auth-event') {
-          showToast('Google Sign-In failed: ' + (err.message || err.code), 'error');
-        }
-      });
-  }, []);
+  const getRoleSettings = () => {
+    let sidebarRole: 'admin' | 'citizen' = 'admin';
+    let title = 'Municipal Authority';
+    let dest = '/dashboard';
+    let avatar = 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=150&q=80';
 
-  // Handle Google Login — uses redirect flow (no popup) to avoid COOP browser warnings
-  const handleGoogleLogin = () => {
-    if (!realFirebaseActive) {
-      // Mock mode simulation
-      setIsAuthenticating(true);
-      setTimeout(() => {
-        const sessionUser = {
-          email: 'google.demo@roadwatch.gov',
-          uid: 'mock_google_uid_123',
-          role: role,
-          provider: 'google'
-        };
-        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
-        showToast('Demo Google Login successful! Redirecting...', 'success');
-        setTimeout(() => routeUser(role), 1200);
-      }, 1500);
-      return;
+    if (role === 'maintenance') {
+      sidebarRole = 'admin';
+      title = 'Maintenance Supervisor';
+      dest = '/gov-dashboard';
+      avatar = 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80';
+    } else if (role === 'citizen') {
+      sidebarRole = 'citizen';
+      title = 'Resident Citizen';
+      dest = '/citizen';
+      avatar = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80';
     }
 
-    // Save role before redirect so we can restore it when Google returns us here
-    localStorage.setItem('roadwatch_pending_google_role', role);
-    setIsAuthenticating(true);
+    return { sidebarRole, title, dest, avatar };
+  };
 
-    const auth = getAuth();
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
-    // signInWithRedirect: browser navigates to Google, then back — no popup, no COOP issue
-    signInWithRedirect(auth, provider).catch((err: any) => {
-      localStorage.removeItem('roadwatch_pending_google_role');
-      handleFirebaseError(err);
-      setIsAuthenticating(false);
-    });
+  // Handle Google Login
+  const handleGoogleLogin = async () => {
+    setIsAuthenticating(true);
+    setToast(null);
+
+    const { sidebarRole, title, dest, avatar } = getRoleSettings();
+
+    // Bypass real Firebase for demo mode
+    if (false && realFirebaseActive) {
+      const provider = new GoogleAuthProvider();
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+        
+        const userProfile = {
+          email: user.email,
+          role: sidebarRole,
+          name: user.displayName || user.email?.split('@')[0] || 'Google User',
+          title: title,
+          avatarUrl: avatar,
+          uid: user.uid
+        };
+
+        // Store user role in Firestore
+        try {
+          const userDocRef = getDocRef('users', user.uid);
+          await setDocument(userDocRef, userProfile);
+        } catch (firestoreErr) {
+          console.warn('Firestore write failed, proceeding with login:', firestoreErr);
+        }
+
+        // Save user session
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(userProfile));
+        localStorage.setItem('user_role', sidebarRole);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        
+        showToast('Login successful! Redirecting to Command Center...', 'success');
+        
+        setTimeout(() => {
+          navigate(redirect || dest);
+        }, 1000);
+      } catch (err: any) {
+        handleFirebaseError(err);
+        setIsAuthenticating(false);
+      }
+    } else {
+      // Simulate Google Sign-In
+      setTimeout(() => {
+        const namePart = role === 'citizen' ? 'Google Citizen' : role === 'maintenance' ? 'Google Maintainer' : 'Google Authority';
+        const userProfile = {
+          email: `${role}.google@roadwatch.gov`,
+          role: sidebarRole,
+          name: `Mock ${namePart}`,
+          title: title,
+          avatarUrl: avatar,
+          uid: `mock-google-uid-${Date.now()}`
+        };
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(userProfile));
+        localStorage.setItem('user_role', sidebarRole);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+
+        showToast('Demo Google Login successful! Redirecting...', 'success');
+        
+        setTimeout(() => {
+          navigate(redirect || dest);
+        }, 1000);
+      }, 1200);
+    }
   };
 
   // Handle Email/Password Login
@@ -149,8 +180,21 @@ export function Login() {
     setIsAuthenticating(true);
     setToast(null);
 
+    const { sidebarRole, title, dest, avatar } = getRoleSettings();
+    const namePart = email.split('@')[0];
+    const displayName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+
+    const userProfile = {
+      email,
+      role: sidebarRole,
+      name: displayName,
+      title: title,
+      avatarUrl: avatar
+    };
+
     // Testing triggers for mock error states
-    if (!realFirebaseActive) {
+    // Force simulated mock login for offline demo
+    if (true || !realFirebaseActive) {
       setTimeout(() => {
         const lowerEmail = email.toLowerCase();
         if (!lowerEmail.includes('@')) {
@@ -175,67 +219,70 @@ export function Login() {
         }
 
         // Successful mock sign-in
-        const sessionUser = {
-          email: email,
-          uid: 'mock_uid_456',
-          role: role,
-          provider: 'email'
-        };
-        localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
+        const completeProfile = { ...userProfile, uid: `mock-uid-${Date.now()}` };
+        localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
+        localStorage.setItem('user_role', sidebarRole);
+        window.dispatchEvent(new Event('roadwatch-user-updated'));
+
         showToast('Login successful! Welcome back.', 'success');
 
         setTimeout(() => {
-          routeUser(role);
-        }, 1200);
-      }, 1500);
+          navigate(redirect || dest);
+        }, 1000);
+      }, 1200);
       return;
     }
 
     // Real Firebase auth
     try {
-      const auth = getAuth();
-      const result = await signInWithEmailAndPassword(auth, email, password);
-      const user = result.user;
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+      } catch (loginErr: any) {
+        if (
+          loginErr.code === 'auth/user-not-found' || 
+          loginErr.code === 'auth/invalid-credential' || 
+          loginErr.code === 'auth/cannot-find-user'
+        ) {
+          try {
+            // Auto register if user does not exist (acting as SignUp/SignIn combo)
+            userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          } catch (signupErr: any) {
+            if (signupErr.code === 'auth/email-already-in-use') {
+              const wrongPassErr = new Error('Incorrect Password');
+              (wrongPassErr as any).code = 'auth/wrong-password';
+              throw wrongPassErr;
+            }
+            throw signupErr;
+          }
+        } else {
+          throw loginErr;
+        }
+      }
+
+      const user = userCredential.user;
+      const completeProfile = { ...userProfile, uid: user.uid };
       
-      // Store user role in Firestore (catch errors to prevent blocking login)
+      // Store user role in Firestore
       try {
         const userDocRef = getDocRef('users', user.uid);
-        await setDocument(userDocRef, { email: user.email, role: role });
+        await setDocument(userDocRef, completeProfile);
       } catch (firestoreErr) {
         console.warn('Firestore write failed, proceeding with login:', firestoreErr);
       }
 
-      const sessionUser = {
-        email: user.email,
-        uid: user.uid,
-        role: role,
-        provider: 'email'
-      };
-      localStorage.setItem('roadwatch_user', JSON.stringify(sessionUser));
+      localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
+      localStorage.setItem('user_role', sidebarRole);
+      window.dispatchEvent(new Event('roadwatch-user-updated'));
+
       showToast('Login successful! Loading dashboard...', 'success');
 
       setTimeout(() => {
-        routeUser(role);
-      }, 1200);
+        navigate(redirect || dest);
+      }, 1000);
     } catch (err: any) {
       handleFirebaseError(err);
       setIsAuthenticating(false);
-    }
-  };
-
-  // Redirect based on selected role
-  const routeUser = (selectedRole: typeof role) => {
-    if (redirect) {
-      navigate(decodeURIComponent(redirect));
-      return;
-    }
-
-    if (selectedRole === 'authority') {
-      navigate('/dashboard');
-    } else if (selectedRole === 'maintenance') {
-      navigate('/gov-dashboard');
-    } else {
-      navigate('/citizen');
     }
   };
 
@@ -246,9 +293,9 @@ export function Login() {
       {toast && (
         <div className={`fixed bottom-6 right-6 z-[100] px-5 py-4 rounded-xl shadow-2xl flex items-center gap-4 animate-fade-in-up border max-w-sm transition-all duration-300 ${
           toast.type === 'success' 
-            ? 'bg-green-600 text-white border-green-500' 
+            ? 'bg-emerald-600 text-white border-emerald-500' 
             : toast.type === 'error'
-              ? 'bg-red-600 text-white border-red-500'
+              ? 'bg-red-650 text-white border-red-550'
               : 'bg-slate-800 text-white border-slate-700'
         }`}>
           <div className="relative w-4 h-4 flex-shrink-0">
@@ -269,13 +316,14 @@ export function Login() {
       {/* LEFT SIDE: Hero Content (60%) */}
       <div 
         onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
         className="lg:w-3/5 bg-slate-100 border-r border-slate-200 p-8 lg:p-16 flex flex-col justify-between min-h-[500px] relative overflow-hidden group/hero"
       >
-        {/* Interactive Parallax Background Image */}
+        {/* Interactive Parallax Background Image - World Map with 80% transparency */}
         <div 
-          className="absolute inset-0 pointer-events-none opacity-[0.25] bg-cover bg-center transition-transform duration-300 ease-out scale-[1.08]"
+          className="absolute inset-0 pointer-events-none opacity-20 bg-cover bg-center transition-transform duration-300 ease-out scale-[1.08]"
           style={{
-            backgroundImage: `url('https://images.unsplash.com/photo-1524661135-423995f22d0b?auto=format&fit=crop&w=1600&q=80')`,
+            backgroundImage: "url('/login_map_background.png')",
             transform: `translate(${mousePos.x}px, ${mousePos.y}px)`,
           }}
         />
@@ -322,7 +370,10 @@ export function Login() {
         {/* Footer info */}
         <div className="relative z-10 text-[11px] text-slate-400 mt-12 flex justify-between border-t border-slate-200/60 pt-4 max-w-2xl mx-auto lg:mx-0 w-full">
           <p>© {new Date().getFullYear()} ROADWATCH AI. All rights reserved.</p>
-          <a href="#" className="hover:underline font-semibold">Government Operations Guide</a>
+          <a href="#" className="hover:underline font-semibold" onClick={(e) => {
+            e.preventDefault();
+            showToast('Operations Guide PDF is currently in production.', 'info');
+          }}>Government Operations Guide</a>
         </div>
       </div>
 
@@ -391,7 +442,10 @@ export function Login() {
             <div>
               <div className="flex justify-between items-center mb-2">
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Password</label>
-                <a href="#" className="text-[10px] font-bold text-slate-800 hover:underline">
+                <a href="#" className="text-[10px] font-bold text-slate-800 hover:underline" onClick={(e) => {
+                  e.preventDefault();
+                  showToast('Password reset email helper is disabled in demo mode.', 'info');
+                }}>
                   Forgot Password?
                 </a>
               </div>
@@ -444,7 +498,18 @@ export function Login() {
                   <button
                     key={opt.key}
                     type="button"
-                    onClick={() => setRole(opt.key as any)}
+                    onClick={() => {
+                      const key = opt.key as 'authority' | 'maintenance' | 'citizen';
+                      setRole(key);
+                      if (key === 'authority') {
+                        setEmail('authority@roadwatch.gov');
+                      } else if (key === 'maintenance') {
+                        setEmail('maintenance@roadwatch.gov');
+                      } else {
+                        setEmail('citizen@gmail.com');
+                      }
+                      setPassword('123456');
+                    }}
                     className={`py-2.5 rounded-lg border text-[10px] font-black text-center transition-all cursor-pointer select-none ${
                       role === opt.key 
                         ? 'border-slate-900 bg-slate-900 text-white shadow-sm' 
@@ -480,8 +545,8 @@ export function Login() {
             <span className="font-bold text-slate-800 block mb-0.5">Quick Testing Tips:</span>
             Use any email/pass combination. To trigger error testing states:
             <ul className="list-disc pl-3.5 mt-1 font-semibold space-y-0.5">
-              <li>Input <code className="text-red-600">unknown@roadwatch.gov</code> for Account Not Found.</li>
-              <li>Input <code className="text-red-600">network@roadwatch.gov</code> for Network Error.</li>
+              <li>Input <code className="text-red-655 font-bold">unknown@roadwatch.gov</code> for Account Not Found.</li>
+              <li>Input <code className="text-red-655 font-bold">network@roadwatch.gov</code> for Network Error.</li>
               <li>Enter a short password (&lt;6 chars) for Incorrect Password.</li>
             </ul>
           </div>
@@ -497,4 +562,3 @@ export function Login() {
     </div>
   );
 }
-

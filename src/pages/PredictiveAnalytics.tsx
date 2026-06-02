@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldAlert, 
   TrendingUp, 
@@ -12,6 +12,7 @@ import {
   BrainCircuit,
   Compass
 } from 'lucide-react';
+import { getReports, Report } from '../utils/storage';
 
 interface PredictionSegment {
   id: string;
@@ -29,74 +30,123 @@ interface PredictionSegment {
 
 export function PredictiveAnalytics() {
   const [activeDistrict, setActiveDistrict] = useState<string>('All');
+  const [reports, setReports] = useState<Report[]>(() => getReports());
 
-  const predictiveSegments: PredictionSegment[] = [
+  useEffect(() => {
+    const handleSync = () => {
+      setReports(getReports());
+    };
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
+
+  const baseSegments = [
     {
       id: 'seg-101',
       segmentName: 'A12-Orchard North',
       roadName: 'Orchard Link',
       district: 'Orchard Sector',
-      failureProbability: 84,
-      predictedFailureDays: 21,
-      riskCategory: 'Severe',
-      rainfallImpact: 'High',
-      trafficDensity: 'High',
+      matchKeys: ['orchard'],
+      defaultProbability: 84,
+      rainfallImpact: 'High' as const,
+      trafficDensity: 'High' as const,
       historicalAccidents: 4,
-      recommendation: 'Schedule asphalt sealing within 5 days. Water runoff pooling is accelerating micro-fissure expansion.'
+      baseRecommendation: 'Schedule asphalt sealing. Water runoff pooling is accelerating micro-fissure expansion.'
     },
     {
       id: 'seg-102',
       segmentName: 'B07-Bayfront Northbound',
       roadName: 'Bayfront Ave',
       district: 'Marina Bay',
-      failureProbability: 78,
-      predictedFailureDays: 30,
-      riskCategory: 'Severe',
-      rainfallImpact: 'High',
-      trafficDensity: 'High',
+      matchKeys: ['bayfront'],
+      defaultProbability: 78,
+      rainfallImpact: 'High' as const,
+      trafficDensity: 'High' as const,
       historicalAccidents: 2,
-      recommendation: 'Clear roadside drains immediately. Heavy rain predictions indicate sub-layer soil saturation limits will be breached.'
+      baseRecommendation: 'Clear roadside drains. Heavy rain predictions indicate sub-layer soil saturation limits will be breached.'
     },
     {
       id: 'seg-103',
       segmentName: 'C22-Cross Street East',
       roadName: 'Cross St',
       district: 'Downtown Core',
-      failureProbability: 52,
-      predictedFailureDays: 60,
-      riskCategory: 'Warning',
-      rainfallImpact: 'Medium',
-      trafficDensity: 'High',
+      matchKeys: ['cross'],
+      defaultProbability: 52,
+      rainfallImpact: 'Medium' as const,
+      trafficDensity: 'High' as const,
       historicalAccidents: 1,
-      recommendation: 'Monitor structural vibrations. Construction works nearby are creating aggregate displacement risks.'
+      baseRecommendation: 'Monitor structural vibrations. Construction works nearby are creating aggregate displacement risks.'
     },
     {
       id: 'seg-104',
       segmentName: 'D09-Geylang Bypass',
       roadName: 'Geylang Road',
       district: 'Geylang East',
-      failureProbability: 35,
-      predictedFailureDays: 90,
-      riskCategory: 'Stable',
-      rainfallImpact: 'Low',
-      trafficDensity: 'Medium',
+      matchKeys: ['geylang'],
+      defaultProbability: 35,
+      rainfallImpact: 'Low' as const,
+      trafficDensity: 'Medium' as const,
       historicalAccidents: 0,
-      recommendation: 'Routine maintenance sweep scheduled. Surface layer shows standard friction wear index.'
+      baseRecommendation: 'Routine maintenance sweep scheduled. Surface layer shows standard friction wear index.'
     },
     {
       id: 'seg-105',
       segmentName: 'E15-Napier Outer Lane',
       roadName: 'Napier Rd',
       district: 'Orchard Sector',
-      failureProbability: 72,
-      predictedFailureDays: 45,
-      riskCategory: 'Major',
-      rainfallImpact: 'High',
-      trafficDensity: 'Medium',
+      matchKeys: ['napier'],
+      defaultProbability: 72,
+      rainfallImpact: 'High' as const,
+      trafficDensity: 'Medium' as const,
       historicalAccidents: 3,
-      recommendation: 'Plan aggregate binder injection. Heavy bus transit is creating localized shear stress fractures.'
+      baseRecommendation: 'Plan aggregate binder injection. Heavy bus transit is creating localized shear stress fractures.'
     }
   ];
+
+  const predictiveSegments: PredictionSegment[] = baseSegments.map(seg => {
+    const matchingHazards = reports.filter(r => 
+      !r.resolved && 
+      seg.matchKeys.some(key => r.location.toLowerCase().includes(key) || r.title.toLowerCase().includes(key))
+    );
+
+    let probability = seg.defaultProbability;
+    if (matchingHazards.length > 0) {
+      probability += matchingHazards.length * 8;
+      matchingHazards.forEach(h => {
+        if (h.severity === 'Critical') probability += 10;
+      });
+    } else {
+      probability = Math.round(probability / 2);
+    }
+    probability = Math.min(98, Math.max(10, probability));
+
+    const predictedFailureDays = Math.max(7, Math.round(90 * (1 - probability / 100)));
+
+    let riskCategory: 'Severe' | 'Major' | 'Warning' | 'Stable' = 'Stable';
+    if (probability >= 80) riskCategory = 'Severe';
+    else if (probability >= 60) riskCategory = 'Major';
+    else if (probability >= 40) riskCategory = 'Warning';
+
+    const recommendation = matchingHazards.length > 0
+      ? `[ALERT: ${matchingHazards.length} ACTIVE INCIDENT${matchingHazards.length > 1 ? 'S' : ''}] ${seg.baseRecommendation}`
+      : `No immediate threats. ${seg.baseRecommendation}`;
+
+    return {
+      id: seg.id,
+      segmentName: seg.segmentName,
+      roadName: seg.roadName,
+      district: seg.district,
+      failureProbability: probability,
+      predictedFailureDays,
+      riskCategory,
+      rainfallImpact: seg.rainfallImpact,
+      trafficDensity: seg.trafficDensity,
+      historicalAccidents: seg.historicalAccidents,
+      recommendation
+    };
+  });
 
   const filteredSegments = activeDistrict === 'All' 
     ? predictiveSegments 
@@ -129,6 +179,9 @@ export function PredictiveAnalytics() {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
+  // Find highest risk segment
+  const highestRiskSeg = [...predictiveSegments].sort((a,b) => b.failureProbability - a.failureProbability)[0];
+
   return (
     <div className="p-8 max-w-[1440px] mx-auto pb-32 animate-fade-in-up">
       
@@ -149,13 +202,13 @@ export function PredictiveAnalytics() {
             <div className="bg-white/5 border border-white/10 p-3 rounded-lg flex items-start gap-2.5">
               <div className="w-2 h-2 rounded-full bg-red-400 mt-1.5 shrink-0" />
               <p className="text-xs font-medium text-slate-200 leading-relaxed">
-                Zone A has a 78% risk of road deterioration within the next 30 days.
+                {highestRiskSeg ? `${highestRiskSeg.roadName} has a ${highestRiskSeg.failureProbability}% risk of pavement failure within the next ${highestRiskSeg.predictedFailureDays} days.` : "All pavement sectors currently stable."}
               </p>
             </div>
             <div className="bg-white/5 border border-white/10 p-3 rounded-lg flex items-start gap-2.5">
               <div className="w-2 h-2 rounded-full bg-blue-400 mt-1.5 shrink-0" />
               <p className="text-xs font-medium text-slate-200 leading-relaxed">
-                Heavy rainfall may increase pothole formation in Sector 5.
+                {severeSegmentsCount > 0 ? `${severeSegmentsCount} high-priority deterioration sectors flagged. Proactive maintenance clearing advised.` : "No immediate precipitation deterioration warnings flagged."}
               </p>
             </div>
           </div>

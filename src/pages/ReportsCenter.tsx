@@ -39,8 +39,284 @@ export function ReportsCenter() {
     }
   };
 
+  const generateCSVContent = (): string => {
+    let headers: string[] = [];
+    let rows: string[][] = [];
+
+    const filterByDistrict = (items: any[]): any[] => {
+      if (district === 'All') return items;
+      const q = district.replace(' only', '').toLowerCase();
+      return items.filter(item => {
+        const loc = ((item.location as string) || (item.locationName as string) || '').toLowerCase();
+        return loc.includes(q) || (q === 'orchard' && loc.includes('orchard')) || (q === 'marina' && loc.includes('bayfront'));
+      });
+    };
+
+    if (reportType === 'weekly' || reportType === 'monthly') {
+      headers = ['ID', 'Title', 'Location', 'Severity', 'Status', 'Priority Score', 'Estimated Risk', 'Source', 'Timestamp'];
+      const filteredReports = filterByDistrict(reports);
+      rows = filteredReports.map(r => [
+        r.id,
+        r.title.replace(/"/g, '""'),
+        r.location.replace(/"/g, '""'),
+        r.severity,
+        r.status || '',
+        String(r.priorityScore || ''),
+        (r.estimatedRisk || '').replace(/"/g, '""'),
+        r.source || '',
+        r.timestamp || ''
+      ]);
+    } else if (reportType === 'sensors') {
+      headers = ['Sensor ID', 'Name', 'Location', 'Vibration (Hz)', 'Temperature (C)', 'Battery (%)', 'Status', 'Connectivity', 'Road Health Score'];
+      const filteredSensors = filterByDistrict(sensors);
+      rows = filteredSensors.map(s => [
+        s.id,
+        s.name,
+        s.locationName,
+        String(s.vibration),
+        String(s.temperature),
+        String(s.battery),
+        s.status,
+        s.connectivity,
+        String(s.roadHealthScore)
+      ]);
+    } else { // financial
+      headers = ['Item', 'Quantity', 'Est Unit Cost (SGD)', 'Total Cost (SGD)', 'Status'];
+      const filteredReports = filterByDistrict(reports);
+      const activePotholes = filteredReports.filter(r => !r.resolved && (r.title.toLowerCase().includes('pothole') || r.icon === 'alert'));
+      const activeFloods = filteredReports.filter(r => !r.resolved && (r.title.toLowerCase().includes('flood') || r.icon === 'droplets'));
+      const resCount = filteredReports.filter(r => r.resolved).length;
+      
+      rows = [
+        ['Resolved Paving Works (Complete)', String(resCount), '850', String(resCount * 850), 'Paid'],
+        ['Pending Pothole Repairs', String(activePotholes.length), '1200', String(activePotholes.length * 1200), 'Budgeted'],
+        ['Emergency Drainage Clearance', String(activeFloods.length), '1500', String(activeFloods.length * 1500), 'Budgeted'],
+        ['AI Core Licensing & Edge Maintenance', '5', '450', '2250', 'Fixed Cost']
+      ];
+    }
+
+    return [
+      headers.join(','),
+      ...rows.map(row => row.map(val => `"${val}"`).join(','))
+    ].join('\n');
+  };
+
+  const downloadCSV = () => {
+    const csvContent = generateCSVContent();
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${reportType}_report_${district.toLowerCase().replace(/\s+/g, '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const filterByDistrict = (items: any[]): any[] => {
+      if (district === 'All') return items;
+      const q = district.replace(' only', '').toLowerCase();
+      return items.filter(item => {
+        const loc = ((item.location as string) || (item.locationName as string) || '').toLowerCase();
+        return loc.includes(q) || (q === 'orchard' && loc.includes('orchard')) || (q === 'marina' && loc.includes('bayfront'));
+      });
+    };
+
+    const filteredReports = filterByDistrict(reports);
+    const filteredSensors = filterByDistrict(sensors);
+
+    let mainTableHTML = '';
+    if (reportType === 'weekly' || reportType === 'monthly') {
+      mainTableHTML = `
+        <h3>Active Hazards Registry</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Hazard Title</th>
+              <th>Location</th>
+              <th>Severity</th>
+              <th>Status</th>
+              <th>Priority Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredReports.map(r => `
+              <tr>
+                <td>${r.id}</td>
+                <td>${r.title}</td>
+                <td>${r.location}</td>
+                <td><span class="badge ${r.severity.toLowerCase()}">${r.severity}</span></td>
+                <td>${r.status || 'Detected'}</td>
+                <td>${r.priorityScore || ''}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } else if (reportType === 'sensors') {
+      mainTableHTML = `
+        <h3>IoT Sensor Telemetry Logs</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Node ID</th>
+              <th>Device Name</th>
+              <th>Location</th>
+              <th>Vibration</th>
+              <th>Temp</th>
+              <th>Battery</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredSensors.map(s => `
+              <tr>
+                <td>${s.id}</td>
+                <td>${s.name}</td>
+                <td>${s.locationName}</td>
+                <td>${s.vibration} Hz</td>
+                <td>${s.temperature} &deg;C</td>
+                <td>${s.battery}%</td>
+                <td><span class="badge ${s.status.toLowerCase()}">${s.status}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } else { // financial
+      const activePotholes = filteredReports.filter(r => !r.resolved && (r.title.toLowerCase().includes('pothole') || r.icon === 'alert'));
+      const activeFloods = filteredReports.filter(r => !r.resolved && (r.title.toLowerCase().includes('flood') || r.icon === 'droplets'));
+      const resCount = filteredReports.filter(r => r.resolved).length;
+      const totalBudget = (resCount * 850) + (activePotholes.length * 1200) + (activeFloods.length * 1500) + 2250;
+
+      mainTableHTML = `
+        <h3>Q2 Budget & Maintenance Cost Allocation</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Expense Item</th>
+              <th>Quantity</th>
+              <th>Est. Unit Cost</th>
+              <th>Total Cost</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Resolved Paving Works (Complete)</td>
+              <td>${resCount}</td>
+              <td>$850 SGD</td>
+              <td>$${resCount * 850} SGD</td>
+              <td>Paid</td>
+            </tr>
+            <tr>
+              <td>Pending Pothole Repairs</td>
+              <td>${activePotholes.length}</td>
+              <td>$1,200 SGD</td>
+              <td>$${activePotholes.length * 1200} SGD</td>
+              <td>Budgeted</td>
+            </tr>
+            <tr>
+              <td>Emergency Drainage Clearance</td>
+              <td>${activeFloods.length}</td>
+              <td>$1,500 SGD</td>
+              <td>$${activeFloods.length * 1500} SGD</td>
+              <td>Budgeted</td>
+            </tr>
+            <tr>
+              <td>AI Core Licensing & Edge Maintenance</td>
+              <td>5 Nodes</td>
+              <td>$450 SGD</td>
+              <td>$2,250 SGD</td>
+              <td>Fixed Cost</td>
+            </tr>
+            <tr class="total-row">
+              <td colspan="3">Total Cost Allocation:</td>
+              <td colspan="2">$${totalBudget} SGD</td>
+            </tr>
+          </tbody>
+        </table>
+      `;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${getReportTitle()}</title>
+          <style>
+            body { font-family: sans-serif; color: #1a1f2c; margin: 40px; line-height: 1.5; }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; }
+            h1 { font-size: 20px; margin: 0; color: #0c101a; }
+            h3 { font-size: 14px; margin-top: 30px; margin-bottom: 10px; text-transform: uppercase; color: #475569; letter-spacing: 0.5px; }
+            .meta { font-size: 11px; color: #64748b; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }
+            th, td { border: 1px solid #e2e8f0; padding: 10px; text-align: left; }
+            th { background: #f8fafc; font-weight: bold; color: #334155; }
+            .badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+            .badge.critical { background: #fee2e2; color: #991b1b; }
+            .badge.high { background: #fee2e2; color: #991b1b; }
+            .badge.major { background: #ffedd5; color: #9a3412; }
+            .badge.medium { background: #ffedd5; color: #9a3412; }
+            .badge.online { background: #dcfce7; color: #166534; }
+            .badge.warning { background: #fef9c3; color: #854d0e; }
+            .badge.offline { background: #f1f5f9; color: #475569; }
+            .total-row { font-weight: bold; background: #f8fafc; }
+            .footer { margin-top: 50px; font-size: 10px; text-align: center; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <h1>${getReportTitle()}</h1>
+              <div class="meta" style="margin-top: 5px;">
+                <span>District: ${district === 'All' ? 'All Districts Combined' : district}</span> &bull; 
+                <span>CSO: Marcus Thorne</span>
+              </div>
+            </div>
+            <div class="meta" style="text-align: right;">
+              <span>Report Generated: ${new Date().toLocaleString()}</span><br/>
+              <span>System: RoadWatch AI Portal</span>
+            </div>
+          </div>
+          <p style="font-size: 12px; color: #475569;">
+            This document compiles verified reports from the RoadWatch AI system, incorporating citizen inputs and IoT sensor streams.
+          </p>
+          ${mainTableHTML}
+          <div class="footer">
+            Confidential &bull; Municipal Infrastructure Services (SG)
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleExportAction = () => {
+    if (format === 'pdf') {
+      handlePrint();
+    } else {
+      downloadCSV();
+    }
+  };
+
+  const handleShare = () => {
+    navigator.clipboard.writeText(window.location.href);
+    alert('Shareable report link copied to clipboard.');
+  };
+
   return (
-    <div className="p-8 max-w-[1440px] mx-auto pb-32 animate-fade-in-up">
+    <div className="p-6 max-w-7xl mx-auto space-y-8">
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-primary tracking-tight">Reporting & Export Center</h2>
         <p className="text-text-secondary mt-1">Export official municipal road inspections, budget briefs, and sensor uptime documents.</p>
@@ -186,7 +462,7 @@ export function ReportsCenter() {
               <div className="flex gap-2">
                 <button
                   disabled={!generationDone}
-                  onClick={() => alert(`Exporting ${getReportTitle()} in .${format} format...`)}
+                  onClick={handleExportAction}
                   className="bg-primary hover:bg-neutral-800 disabled:bg-slate-200 text-white disabled:text-slate-400 p-2 rounded-lg flex items-center justify-center transition-all active:scale-95 cursor-pointer shadow-sm"
                   title="Download File"
                 >
@@ -194,7 +470,7 @@ export function ReportsCenter() {
                 </button>
                 <button
                   disabled={!generationDone}
-                  onClick={() => alert('Opening printer interface...')}
+                  onClick={handlePrint}
                   className="bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-text-secondary disabled:text-slate-300 p-2 rounded-lg flex items-center justify-center transition-all active:scale-95 border border-border-subtle cursor-pointer"
                   title="Print Report"
                 >
@@ -202,7 +478,7 @@ export function ReportsCenter() {
                 </button>
                 <button
                   disabled={!generationDone}
-                  onClick={() => alert('Link copied to clipboard. Share with municipal officials.')}
+                  onClick={handleShare}
                   className="bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-text-secondary disabled:text-slate-300 p-2 rounded-lg flex items-center justify-center transition-all active:scale-95 border border-border-subtle cursor-pointer"
                   title="Share Report"
                 >

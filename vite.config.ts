@@ -17,11 +17,16 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
-      // Fix: allow Firebase Auth popup (signInWithPopup) to poll window.closed
-      // without being blocked by the browser's COOP policy.
-      headers: {
-        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
-        'Cross-Origin-Embedder-Policy': 'unsafe-none',
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3001',
+          changeOrigin: true,
+        },
+        '/socket.io': {
+          target: 'http://localhost:3001',
+          ws: true,
+          changeOrigin: true,
+        },
       },
     },
   };

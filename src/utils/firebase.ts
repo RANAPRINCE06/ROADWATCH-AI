@@ -1,5 +1,4 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
-import { getAnalytics, isSupported as analyticsIsSupported } from 'firebase/analytics';
 import { 
   getFirestore, 
   collection, 
@@ -22,18 +21,22 @@ import {
   uploadBytesResumable, 
   getDownloadURL 
 } from 'firebase/storage';
-
-const cleanEnv = (val: any) => typeof val === 'string' ? val.replace(/^["']|["']$/g, '').trim() : val;
+import { 
+  getAuth,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
 
 // Check if Firebase environment variables are configured
 const firebaseConfig = {
-  apiKey: cleanEnv(import.meta.env.VITE_FIREBASE_API_KEY),
-  authDomain: cleanEnv(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
-  projectId: cleanEnv(import.meta.env.VITE_FIREBASE_PROJECT_ID),
-  storageBucket: cleanEnv(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
-  messagingSenderId: cleanEnv(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
-  appId: cleanEnv(import.meta.env.VITE_FIREBASE_APP_ID),
-  measurementId: cleanEnv(import.meta.env.VITE_FIREBASE_MEASUREMENT_ID)
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const isConfigured = 
@@ -43,7 +46,7 @@ const isConfigured =
 
 let db: any;
 let storage: any;
-let analytics: any = null;
+let auth: any;
 let realFirebaseActive = false;
 
 if (isConfigured) {
@@ -51,18 +54,11 @@ if (isConfigured) {
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     db = getFirestore(app);
     storage = getStorage(app);
+    auth = getAuth(app);
     realFirebaseActive = true;
     console.log('Firebase initialized successfully.');
-    // Initialize Analytics only where supported (not in SSR/Node environments)
-    analyticsIsSupported().then(supported => {
-      if (supported) {
-        analytics = getAnalytics(app);
-        console.log('Firebase Analytics initialized.');
-      }
-    }).catch(() => {});
   } catch (err) {
     console.error('Firebase failed to initialize, falling back to mock services:', err);
-    realFirebaseActive = false;
   }
 }
 
@@ -192,8 +188,10 @@ if (!realFirebaseActive) {
   };
 }
 
-export { db, storage, analytics, realFirebaseActive };
+const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+const realGeminiActive = !!(geminiApiKey && geminiApiKey !== 'YOUR_GEMINI_API_KEY' && geminiApiKey !== 'MY_GEMINI_API_KEY');
 
+export { db, storage, auth, realFirebaseActive, realGeminiActive, geminiApiKey };
 
 // Firestore API wrappers that support both real Firebase and fallback local mock
 export function getCollectionRef(path: string) {

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, BrainCircuit, Activity, DollarSign, ShieldAlert, BarChart3, ChevronRight, HelpCircle } from 'lucide-react';
 import { getReports, getSensors, getComplaints, Report } from '../utils/storage';
+import { realGeminiActive, geminiApiKey } from '../utils/firebase';
 
 interface Message {
   id: string;
@@ -35,7 +36,127 @@ export function AICommandCenter() {
     }
   }, [messages, isTyping]);
 
-  const handleSend = (text: string) => {
+  const runLocalFallback = (text: string): string => {
+    const low = text.toLowerCase();
+    const active = reports.filter(r => !r.resolved);
+    const criticals = active.filter(r => r.severity === 'Critical');
+    
+    if (low.includes('budget') || low.includes('cost') || low.includes('estimate')) {
+      const totalCost = active.length * 1200 + 4000;
+      return `[Local AI Engine] Based on current active hazards (${active.length} unresolved reports) and contractor cost rates, the estimated total repair budget is $${totalCost.toLocaleString()} SGD. Detailed cost breakdown is shown below.`;
+    } else if (low.includes('risk') || low.includes('accident') || low.includes('safety')) {
+      if (criticals.length > 0) {
+        const locations = criticals.map(c => c.location).join(', ');
+        return `[Local AI Engine] High-risk zones identified at: ${locations}. Critical hazards are accelerating vehicle collision probabilities in these sectors. Rerouting traffic is advised.`;
+      }
+      return `[Local AI Engine] Sector 4, Orchard Road (decay index 8.4) and Bayfront Ave North (15cm flooding) present the highest collision probabilities due to speed limits and severe hazard conditions.`;
+    } else if (low.includes('failure') || low.includes('predict') || low.includes('decay')) {
+      return `[Local AI Engine] Predictive analysis flags Orchard Road segment A12 (84% probability of failure within 21 days) and Napier Road bus lane (72% probability within 30 days) for immediate preventive sealing.`;
+    } else if (low.includes('dispatch') || low.includes('team') || low.includes('urgent') || low.includes('repair')) {
+      const pendingAssign = active.filter(r => r.status === 'Detected' || r.status === 'Verified');
+      if (pendingAssign.length > 0) {
+        const titles = pendingAssign.map(p => `"${p.title}" at ${p.location}`).join(', ');
+        return `[Local AI Engine] Immediate repair dispatches needed for: ${titles}. Crews should be deployed with corresponding work orders.`;
+      }
+      return `[Local AI Engine] All critical dispatches scheduled. Team Gamma is currently active on site.`;
+    } else if (low.includes('report') || low.includes('generate') || low.includes('weekly')) {
+      return `[Local AI Engine] Weekly City Infrastructure Briefing generated. Total reported hazards: ${reports.length}, Resolved: ${reports.filter(r => r.resolved).length}, Active IoT sensors: ${sensors.filter(s => s.status === 'Online').length}/5.`;
+    } else {
+      return `[Local AI Engine] I am ready to run diagnostics on Singapore municipal grids. I can estimate repair budgets, map out high-risk accident zones, list team work schedules, or run forecast models for pavement failures.`;
+    }
+  };
+
+  const queryGemini = async (text: string): Promise<{ text: string; charts?: Message['charts'] }> => {
+    const low = text.toLowerCase();
+    let charts: Message['charts'] = undefined;
+    if (low.includes('budget') || low.includes('cost') || low.includes('estimate')) {
+      charts = 'budget';
+    } else if (low.includes('risk') || low.includes('accident') || low.includes('safety')) {
+      charts = 'risk';
+    } else if (low.includes('failure') || low.includes('predict') || low.includes('decay')) {
+      charts = 'failures';
+    } else if (low.includes('dispatch') || low.includes('team') || low.includes('urgent') || low.includes('repair')) {
+      charts = 'repairs';
+    }
+
+    if (!realGeminiActive) {
+      return { text: runLocalFallback(text), charts };
+    }
+
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+      
+      const context = {
+        hazards: reports.filter(r => !r.resolved).map(r => ({
+          id: r.id,
+          title: r.title,
+          location: r.location,
+          severity: r.severity,
+          status: r.status,
+          priorityScore: r.priorityScore
+        })),
+        sensors: sensors.map(s => ({
+          id: s.id,
+          name: s.name,
+          location: s.locationName,
+          status: s.status,
+          vibration: s.vibration,
+          temperature: s.temperature,
+          roadHealthScore: s.roadHealthScore
+        })),
+        complaints: complaints.map(c => ({
+          id: c.id,
+          title: c.title,
+          location: c.locationName,
+          status: c.status,
+          votes: c.votes
+        }))
+      };
+
+      const systemPrompt = `You are the RoadWatch AI Operations Copilot, an autonomous smart city coordinator.
+Below is the current real-time state of the municipal grids in Singapore (hazards, IoT edge sensors, and citizen complaints).
+Use this data to answer the user's questions accurately and dynamically. Do not make up mock data.
+
+Current State Context:
+${JSON.stringify(context)}
+
+Provide clear, concise, and professional answers. If the user asks for budget, cost estimation, risk areas, or dispatches, give answers matching these data values.`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: `${systemPrompt}\n\nUser Question: ${text}`
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const botText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (botText) {
+        return { text: botText, charts };
+      }
+      throw new Error('Invalid response structure from Gemini API');
+    } catch (e) {
+      console.warn('Gemini API call failed. Falling back to local rules engine:', e);
+      return { text: runLocalFallback(text), charts };
+    }
+  };
+
+  const handleSend = async (text: string) => {
     if (!text.trim()) return;
 
     const userMsg: Message = {
@@ -49,42 +170,18 @@ export function AICommandCenter() {
     setInputVal('');
     setIsTyping(true);
 
-    // AI Engine analysis routing
-    setTimeout(() => {
-      setIsTyping(false);
-      const low = text.toLowerCase();
-      let botReply = '';
-      let charts: Message['charts'] = undefined;
+    const result = await queryGemini(text);
 
-      if (low.includes('budget') || low.includes('cost') || low.includes('estimate')) {
-        const totalCost = activeReports.length * 1200 + 4000;
-        botReply = `Based on current active hazards (${activeReports.length} unresolved reports) and historical contractor rates, the estimated total repair budget is $${totalCost.toLocaleString()}. High-severity drainage clearance at Bayfront constitutes the largest slice (approx $8,500). Detailed allocation breakdown is shown below.`;
-        charts = 'budget';
-      } else if (low.includes('risk') || low.includes('accident') || low.includes('safety')) {
-        botReply = `Sector 4, Orchard Road (decay index 8.4) and Bayfront Ave North (15cm flooding) present the highest collision probabilities due to high traffic speed and severe hazard conditions. Rerouting traffic will reduce accident likelihood by 38% in these sectors.`;
-        charts = 'risk';
-      } else if (low.includes('failure') || low.includes('predict') || low.includes('decay')) {
-        botReply = `Predictive analysis flags Orchard Road segment A12 (84% probability of failure within 21 days) and Napier Road bus lane (72% probability within 30 days) for immediate preventive sealing. Scheduling intervention will prevent aggregate failure.`;
-        charts = 'failures';
-      } else if (low.includes('dispatch') || low.includes('team') || low.includes('urgent') || low.includes('repair')) {
-        botReply = `Urgent repairs needed at Sector 4, Orchard Road. Team Alpha (Resurfacing) is assigned for Orchard Road, and Team Delta (Drainage) is scheduled for Bayfront. Priority score metrics advise initiating operations immediately.`;
-        charts = 'repairs';
-      } else if (low.includes('report') || low.includes('generate') || low.includes('weekly')) {
-        botReply = `Weekly City Infrastructure Briefing generated. Total reported hazards: ${reports.length}, Resolved: ${reports.filter(r => r.resolved).length}, Active IoT sensors: ${sensors.filter(s => s.status === 'Online').length}/5. Overall city road health score stands at 82/100.`;
-      } else {
-        botReply = `I am ready to run diagnostics on Singapore municipal grids. I can estimate repair budgets, map out high-risk accident zones, list team work schedules, or run forecast models for pavement failures.`;
-      }
+    setIsTyping(false);
+    const botMsg: Message = {
+      id: `msg-${Date.now() + 1}`,
+      sender: 'bot',
+      text: result.text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      charts: result.charts
+    };
 
-      const botMsg: Message = {
-        id: `msg-${Date.now() + 1}`,
-        sender: 'bot',
-        text: botReply,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        charts
-      };
-
-      setMessages((prev) => [...prev, botMsg]);
-    }, 1000);
+    setMessages((prev) => [...prev, botMsg]);
   };
 
   const getSuggestedQuestion = (index: number) => {

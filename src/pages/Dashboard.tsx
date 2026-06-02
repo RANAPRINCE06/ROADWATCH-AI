@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  TrendingUp,
-  TrendingDown,
-  ShieldCheck,
-  AlertTriangle,
-  Layers,
-  Droplets,
-  HardHat,
-  Car,
-  Check,
-  CheckCircle2,
+import ReactDOM from 'react-dom';
+declare const google: any;
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  ShieldCheck, 
+  AlertTriangle, 
+  Layers, 
+  Droplets, 
+  HardHat, 
+  Car, 
+  Check, 
   Plus,
   ZoomIn,
   ZoomOut,
@@ -24,14 +25,14 @@ import {
   Star,
   MessageSquare
 } from 'lucide-react';
-import {
-  getReports,
-  resolveReport as storageResolveReport,
-  addReport as storageAddReport,
-  updateReportStatus,
-  clearCompletedReports,
+import { 
+  getReports, 
+  getRepairs,
+  resolveReport as storageResolveReport, 
+  addReport as storageAddReport, 
+  updateReportStatus, 
   verifyRepair,
-  Report
+  Report 
 } from '../utils/storage';
 
 const HAZARD_TEMPLATES = [
@@ -44,33 +45,33 @@ const HAZARD_TEMPLATES = [
 // Interactive Image Comparison Slider Component
 function ImageComparisonSlider({ beforeUrl, afterUrl }: { beforeUrl: string; afterUrl: string }) {
   const [sliderPos, setSliderPos] = useState(50);
-
+  
   return (
     <div className="relative w-full h-48 rounded-lg overflow-hidden border border-border-subtle select-none">
       {/* Before Image */}
       <img src={beforeUrl} alt="Before" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
 
       {/* After Image Overlay */}
-      <div
-        className="absolute inset-0 overflow-hidden pointer-events-none"
+      <div 
+        className="absolute inset-0 overflow-hidden pointer-events-none" 
         style={{ width: `${sliderPos}%` }}
       >
-        <img
-          src={afterUrl}
-          alt="After"
-          className="absolute inset-0 w-full h-full object-cover max-w-none"
-          style={{ width: '100%', height: '100%' }}
+        <img 
+          src={afterUrl} 
+          alt="After" 
+          className="absolute inset-0 w-full h-full object-cover max-w-none" 
+          style={{ width: '100%', height: '100%' }} 
         />
       </div>
 
       {/* Divider Line */}
-      <div
-        className="absolute top-0 bottom-0 w-1 bg-white shadow pointer-events-none"
+      <div 
+        className="absolute top-0 bottom-0 w-1 bg-white shadow pointer-events-none" 
         style={{ left: `${sliderPos}%` }}
       />
-
+      
       {/* Handle */}
-      <div
+      <div 
         className="absolute w-6 h-6 rounded-full bg-white border border-slate-300 shadow flex items-center justify-center top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none text-[10px] font-bold text-primary"
         style={{ left: `${sliderPos}%` }}
       >
@@ -78,13 +79,13 @@ function ImageComparisonSlider({ beforeUrl, afterUrl }: { beforeUrl: string; aft
       </div>
 
       {/* Invisible Slider Input for Native Dragging */}
-      <input
-        type="range"
-        min="0"
-        max="100"
-        value={sliderPos}
+      <input 
+        type="range" 
+        min="0" 
+        max="100" 
+        value={sliderPos} 
         onChange={(e) => setSliderPos(Number(e.target.value))}
-        className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-30"
+        className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-30" 
       />
 
       <span className="absolute bottom-1.5 left-2.5 bg-red-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow z-10 pointer-events-none">BEFORE</span>
@@ -93,15 +94,64 @@ function ImageComparisonSlider({ beforeUrl, afterUrl }: { beforeUrl: string; aft
   );
 }
 
+// React Portal wrapper to render React components natively inside Google Maps overlays
+interface PortalOverlayProps {
+  map: any;
+  position: { lat: number; lng: number };
+  children: React.ReactNode;
+}
+
+const GoogleMapPortalOverlay: React.FC<PortalOverlayProps> = ({ map, position, children }) => {
+  const [container] = useState(() => document.createElement('div'));
+
+  useEffect(() => {
+    if (!map || !(window as any).google?.maps) return;
+
+    const overlay = new google.maps.OverlayView();
+
+    overlay.onAdd = () => {
+      container.style.position = 'absolute';
+      container.style.zIndex = '50';
+      overlay.getPanes()?.overlayMouseTarget.appendChild(container);
+    };
+
+    overlay.draw = () => {
+      const projection = overlay.getProjection();
+      if (!projection) return;
+      const latLng = new google.maps.LatLng(position.lat, position.lng);
+      const pos = projection.fromLatLngToDivPixel(latLng);
+      if (pos) {
+        container.style.left = `${pos.x}px`;
+        container.style.top = `${pos.y}px`;
+        container.style.transform = 'translate(-50%, -50%)';
+      }
+    };
+
+    overlay.onRemove = () => {
+      if (container.parentNode && container.parentNode.contains(container)) {
+        container.parentNode.removeChild(container);
+      }
+    };
+
+    overlay.setMap(map);
+
+    return () => {
+      overlay.setMap(null);
+    };
+  }, [map, position, container]);
+
+  return ReactDOM.createPortal(children, container);
+};
+
 export function Dashboard() {
   const [reports, setReports] = useState<Report[]>([]);
-  const [prevCompletedIds, setPrevCompletedIds] = useState<string[]>([]);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [hoveredReportId, setHoveredReportId] = useState<string | null>(null);
   const [aiAccuracy, setAiAccuracy] = useState<number>(98.5);
+  const [meanResolveTime, setMeanResolveTime] = useState<number>(42);
   const [now, setNow] = useState<Date>(new Date());
   const [searchQuery, setSearchQuery] = useState<string>('');
-
+  
   // Feedback System Inputs
   const [feedbackText, setFeedbackText] = useState<string>('');
   const [feedbackRating, setFeedbackRating] = useState<number>(5);
@@ -111,25 +161,6 @@ export function Dashboard() {
     type: 'alert' | 'success' | 'info';
   } | null>(null);
 
-  const [localResolvedId, setLocalResolvedId] = useState<string | null>(null);
-  const [localResolvedMessage, setLocalResolvedMessage] = useState<string | null>(null);
-  const manuallyResolvedIdsRef = useRef<string[]>([]);
-  const [historySearchQuery, setHistorySearchQuery] = useState('');
-  const [historyTeamFilter, setHistoryTeamFilter] = useState('All');
-  const [historyLocationFilter, setHistoryLocationFilter] = useState('All');
-  const [historySeverityFilter, setHistorySeverityFilter] = useState('All');
-  const [historyTypeFilter, setHistoryTypeFilter] = useState('All');
-  const [historySortBy, setHistorySortBy] = useState<'date' | 'team' | 'location' | 'severity' | 'type'>('date');
-  const [expandedHistoryTaskId, setExpandedHistoryTaskId] = useState<string | null>(null);
-  const [isClearingCompletedTasks, setIsClearingCompletedTasks] = useState(false);
-  const [isAdminUser] = useState(() => {
-    try {
-      return (localStorage.getItem('roadwatch_user_role') || 'Admin').toLowerCase() === 'admin';
-    } catch {
-      return true;
-    }
-  });
-
   // Map settings
   const [mapLayer, setMapLayer] = useState<'satellite' | 'color' | 'heatmap'>('satellite');
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -137,13 +168,151 @@ export function Dashboard() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Real Google Maps States
+  const [apiLoaded, setApiLoaded] = useState(false);
+  const [map, setMap] = useState<any>(null);
+  const [isSandboxMode, setIsSandboxMode] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+
+  // Dynamic script loader for Google Maps in Dashboard
+  useEffect(() => {
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+    
+    const loadScript = () => {
+      if ((window as any).google && (window as any).google.maps) {
+        setApiLoaded(true);
+        return;
+      }
+
+      (window as any).initGoogleMapCallbackDashboard = () => {
+        setApiLoaded(true);
+      };
+
+      (window as any).gm_authFailure = () => {
+        console.warn("Google Maps API Authentication failed. Falling back to Sandbox Mode.");
+        setIsSandboxMode(true);
+      };
+
+      const existing = document.getElementById('google-maps-api-script') as HTMLScriptElement;
+      if (existing) {
+        if ((window as any).google && (window as any).google.maps) {
+          setApiLoaded(true);
+        } else {
+          existing.addEventListener('load', () => {
+            if ((window as any).google && (window as any).google.maps) {
+              setApiLoaded(true);
+            }
+          });
+        }
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.id = 'google-maps-api-script';
+      const keyQuery = apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY' ? `key=${apiKey}&` : '';
+      if (!keyQuery) {
+        setIsSandboxMode(true);
+      }
+      script.src = `https://maps.googleapis.com/maps/api/js?${keyQuery}loading=async&callback=initGoogleMapCallbackDashboard&libraries=places,geometry`;
+      script.async = true;
+      script.defer = true;
+      
+      script.addEventListener('load', () => {
+        if ((window as any).google && (window as any).google.maps) {
+          setApiLoaded(true);
+        }
+      });
+      script.addEventListener('error', () => {
+        console.error("Google Maps API script load failed. Switching to Sandbox Mode.");
+        setIsSandboxMode(true);
+      });
+      
+      document.head.appendChild(script);
+    };
+
+    loadScript();
+  }, []);
+
+  // Map instantiation
+  useEffect(() => {
+    if (!apiLoaded || !mapContainerRef.current || map || isSandboxMode) return;
+
+    try {
+      const silverMapStyles = [
+        { elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
+        { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+        { elementType: "labels.text.fill", stylers: [{ color: "#616161" }] },
+        { elementType: "labels.text.stroke", stylers: [{ color: "#f5f5f5" }] },
+        { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
+        { featureType: "poi", stylers: [{ visibility: "off" }] },
+        { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+        { featureType: "road.arterial", elementType: "geometry.fill", stylers: [{ color: "#e0e0e0" }] },
+        { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#dadada" }] },
+        { featureType: "road.highway", elementType: "geometry.fill", stylers: [{ color: "#dadada" }] },
+        { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9c9c9" }] },
+        { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#9e9e9e" }] }
+      ];
+
+      const googleMap = new google.maps.Map(mapContainerRef.current, {
+        center: { lat: 1.2950, lng: 103.8500 }, // Central Singapore focus
+        zoom: 13,
+        styles: silverMapStyles,
+        disableDefaultUI: true,
+        zoomControl: false,
+        mapTypeControl: false,
+        streetViewControl: false,
+      });
+
+      setMap(googleMap);
+    } catch (e) {
+      console.error("Google Maps initialization failed: ", e);
+      setIsSandboxMode(true);
+    }
+  }, [apiLoaded, map, isSandboxMode]);
+
+  // Synchronize map layer (satellite vs color roadmap)
+  useEffect(() => {
+    if (!map || !(window as any).google?.maps) return;
+    if (mapLayer === 'satellite') {
+      map.setMapTypeId(google.maps.MapTypeId.HYBRID);
+    } else {
+      map.setMapTypeId(google.maps.MapTypeId.ROADMAP);
+    }
+  }, [mapLayer, map]);
+
+  // Synchronize selection centering
+  useEffect(() => {
+    if (!map || isSandboxMode || !selectedReportId) return;
+    const found = reports.find(r => r.id === selectedReportId);
+    if (found && found.lat && found.lng) {
+      map.panTo({ lat: found.lat, lng: found.lng });
+      map.setZoom(15);
+    }
+  }, [selectedReportId, map, reports, isSandboxMode]);
+
+  // Real Zoom handlers
+  const handleZoomIn = () => {
+    if (map) {
+      map.setZoom(map.getZoom() + 1);
+    } else {
+      setZoomLevel(prev => Math.min(2.0, prev + 0.25));
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (map) {
+      map.setZoom(map.getZoom() - 1);
+    } else {
+      setZoomLevel(prev => Math.max(1.0, prev - 0.25));
+    }
+  };
+
   // Simulator State (9-stage workflow)
   const [simActive, setSimActive] = useState<boolean>(false);
   const [simStep, setSimStep] = useState<number>(-1);
   const [simReportId, setSimReportId] = useState<string | null>(null);
   const [simLogs, setSimLogs] = useState<string[]>([]);
   const simTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isFirstLoadRef = useRef(true);
 
   const SIM_STEPS = [
     { label: 'Citizen Uploads Image', desc: 'Citizen snaps and uploads pothole photo via mobile portal.' },
@@ -161,10 +330,10 @@ export function Dashboard() {
   const loadReportsFromStorage = (): Report[] => {
     return getReports().map(r => {
       const severity = r.severity || 'Active';
-      const status = r.resolved
-        ? 'Resolved'
-        : (r.status || (r.source === 'AI Detected' || r.source?.includes('AI') ? 'Verified' : 'Detected'));
-
+      const status = r.resolved 
+        ? 'Resolved' 
+        : (r.status || (((r.source === 'AI Detected' || r.source?.includes('AI')) && !r.source?.includes('Citizen')) ? 'Verified' : 'Detected'));
+      
       const priorityScore = r.priorityScore || (severity === 'Critical' ? 92 : severity === 'Active' ? 76 : 48);
       const estimatedRisk = r.estimatedRisk || (severity === 'Critical' ? 'High Accident Risk' : 'Moderate Pavement Decay');
       const recommendedRepairTime = r.recommendedRepairTime || (severity === 'Critical' ? 'Within 24 Hours' : 'Within 3 Days');
@@ -191,11 +360,45 @@ export function Dashboard() {
     });
   };
 
+  const recalculateMeanResolveTime = () => {
+    const reps = getRepairs();
+    const resolvedReps = reps.filter(r => r.status === 'Resolved');
+    if (resolvedReps.length === 0) {
+      setMeanResolveTime(42);
+      return;
+    }
+    
+    let totalMinutes = 0;
+    let count = 0;
+    const allReports = getReports();
+    
+    resolvedReps.forEach(rep => {
+      const hazard = allReports.find(h => h.id === rep.hazardId);
+      if (hazard && hazard.timestamp && rep.timestamp) {
+        const start = new Date(hazard.timestamp).getTime();
+        const end = new Date(rep.timestamp).getTime();
+        const diffMin = (end - start) / (60 * 1000);
+        if (diffMin > 0) {
+          totalMinutes += diffMin;
+          count++;
+        }
+      }
+    });
+    
+    if (count > 0) {
+      setMeanResolveTime(Math.round(totalMinutes / count));
+    } else {
+      setMeanResolveTime(42);
+    }
+  };
+
   useEffect(() => {
     setReports(loadReportsFromStorage());
-
+    recalculateMeanResolveTime();
+    
     const handleSync = () => {
       setReports(loadReportsFromStorage());
+      recalculateMeanResolveTime();
     };
     const handleStartSim = () => {
       startSimulation();
@@ -225,13 +428,15 @@ export function Dashboard() {
     };
 
     window.addEventListener('roadwatch-reports-updated', handleSync);
+    window.addEventListener('roadwatch-repairs-updated', handleSync);
     window.addEventListener('roadwatch-start-simulation', handleStartSim);
     window.addEventListener('roadwatch-search', handleSearch);
     window.addEventListener('roadwatch-select-report', handleSelectReport);
     window.addEventListener('roadwatch-reset-map', handleResetMap);
-
+    
     return () => {
       window.removeEventListener('roadwatch-reports-updated', handleSync);
+      window.removeEventListener('roadwatch-repairs-updated', handleSync);
       window.removeEventListener('roadwatch-start-simulation', handleStartSim);
       window.removeEventListener('roadwatch-search', handleSearch);
       window.removeEventListener('roadwatch-select-report', handleSelectReport);
@@ -239,38 +444,6 @@ export function Dashboard() {
       if (simTimerRef.current) clearInterval(simTimerRef.current);
     };
   }, []);
-
-  // Monitor completed tasks to trigger notifications when a task is completed in real-time
-  useEffect(() => {
-    const completedTasks = reports.filter(r => r.resolved || r.status === 'Resolved');
-    const completedIds = completedTasks.map(r => r.id);
-
-    if (reports.length > 0) {
-      if (isFirstLoadRef.current) {
-        isFirstLoadRef.current = false;
-        setPrevCompletedIds(completedIds);
-      } else {
-        const newlyCompleted = completedTasks.filter(r => !prevCompletedIds.includes(r.id));
-        const newlyCompletedFiltered = newlyCompleted.filter(task => !manuallyResolvedIdsRef.current.includes(task.id));
-        if (newlyCompletedFiltered.length > 0) {
-          newlyCompletedFiltered.forEach(task => {
-            showToast(`✓ Completed Task: "${task.title}" has been successfully resolved.`, 'success');
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('RoadWatch AI Dispatch', {
-                body: `✅ Task Completed: "${task.title}" at ${task.location} has been successfully resolved.`
-              });
-            }
-          });
-        }
-
-        const hasChanged = completedIds.length !== prevCompletedIds.length ||
-                           completedIds.some((id, idx) => id !== prevCompletedIds[idx]);
-        if (hasChanged) {
-          setPrevCompletedIds(completedIds);
-        }
-      }
-    }
-  }, [reports, prevCompletedIds]);
 
   // Update clock & wiggling telemetry
   useEffect(() => {
@@ -324,39 +497,17 @@ export function Dashboard() {
     setTimeout(() => setJustNotification(null), 4000);
   };
 
-  const getDynamicTeamForReport = (r: Report): string => {
-    const titleLower = r.title.toLowerCase();
-    const isDrainage = titleLower.includes('water') || titleLower.includes('flood') || r.icon === 'droplets';
-    const isResurfacing = titleLower.includes('pothole') || titleLower.includes('crack') || r.icon === 'alert' || r.icon === 'hardhat';
-    const isSignal = titleLower.includes('signal') || r.title.toLowerCase().includes('light');
-
-    if (isDrainage) {
-      return r.title.length % 2 === 0 ? 'Marina Drainage Ops' : 'Geylang Drainage Techs';
-    }
-    if (isResurfacing) {
-      const idx = r.title.length % 3;
-      return idx === 0 ? 'Orchard Resurfacing' : idx === 1 ? 'Bishan Pavement Crew' : 'Woodlands Asphalt Crew';
-    }
-    if (isSignal) {
-      return r.title.length % 2 === 0 ? 'Tanjong Signal Patrol' : 'Changi Signal Team';
-    }
-    const idx = r.title.length % 3;
-    return idx === 0 ? 'City Hall Rapid Unit' : idx === 1 ? 'Clementi Quick Squad' : 'Jurong Response Team';
-  };
-
   // Authority Action Panel operations
   const handleVerify = (id: string) => {
     updateReportStatus(id, { status: 'Verified' });
     showToast('Verified hazard details. AI scan complete.', 'info');
   };
 
-  const handleAssign = (id: string, team = 'City Hall Rapid Unit (Rapid Response)') => {
+  const handleAssign = (id: string, team = 'Team Gamma (Rapid Response)') => {
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const assignedAt = Date.now();
-    updateReportStatus(id, {
+    updateReportStatus(id, { 
       status: 'Assigned',
       assignedTeam: team,
-      assignedAt,
       startDate: todayStr,
       estimatedCompletionDate: todayStr
     });
@@ -364,49 +515,13 @@ export function Dashboard() {
   };
 
   const handleStartRepair = (id: string) => {
-    updateReportStatus(id, { status: 'Repairing', startedAt: Date.now() });
+    updateReportStatus(id, { status: 'Repairing' });
     showToast('Crew deployed on site. Repairs active.', 'info');
   };
 
   const handleResolve = (id: string) => {
-    const report = reports.find(r => r.id === id);
-    if (report) {
-      manuallyResolvedIdsRef.current.push(id);
-      setLocalResolvedId(id);
-      setLocalResolvedMessage(`Resolved: ${report.title}`);
-
-      // Clear local toast after 4 seconds
-      setTimeout(() => {
-        setLocalResolvedId(null);
-        setLocalResolvedMessage(null);
-      }, 4000);
-    }
     storageResolveReport(id);
-  };
-
-  const handleClearCompletedTasks = async () => {
-    if (!isAdminUser) {
-      showToast('Admin access required to clear completed task history.', 'alert');
-      return;
-    }
-
-    if (completedTasksHistory.length === 0 || isClearingCompletedTasks) return;
-
-    const confirmed = window.confirm('Are you sure you want to permanently delete all completed tasks?');
-    if (!confirmed) return;
-
-    setIsClearingCompletedTasks(true);
-    try {
-      const deletedCount = await clearCompletedReports();
-      setExpandedHistoryTaskId(null);
-      setReports(loadReportsFromStorage());
-      showToast(`Deleted ${deletedCount} completed task${deletedCount === 1 ? '' : 's'} from history.`, 'success');
-    } catch (error) {
-      console.error('Failed to clear completed tasks:', error);
-      showToast('Unable to clear completed task history. Please try again.', 'alert');
-    } finally {
-      setIsClearingCompletedTasks(false);
-    }
+    showToast('Repaving verified. Hazard marked Resolved.', 'success');
   };
 
   const handleCitizenVerify = (id: string, rating: number, feedback: string) => {
@@ -420,7 +535,7 @@ export function Dashboard() {
     const template = HAZARD_TEMPLATES[Math.floor(Math.random() * HAZARD_TEMPLATES.length)];
     const x = Math.floor(Math.random() * 50) + 25;
     const y = Math.floor(Math.random() * 50) + 25;
-
+    
     const newReport = storageAddReport({
       title: template.title,
       location: template.location,
@@ -515,35 +630,30 @@ export function Dashboard() {
       }
       case 4: { // 5. Authority Assigns Team
         if (currentReportId) {
-          updateReportStatus(currentReportId, {
+          updateReportStatus(currentReportId, { 
             status: 'Assigned',
-            assignedTeam: 'City Hall Rapid Unit (Rapid Response)',
+            assignedTeam: 'Team Gamma (Rapid Response)',
             startDate: todayStr,
             estimatedCompletionDate: todayStr
           });
-          setSimLogs(prev => [...prev, '✓ Step 5: Authority approved dispatch. Crew City Hall Rapid Unit assigned.']);
-          showToast('Step 5: City Hall Rapid Unit crew assigned.', 'info');
+          setSimLogs(prev => [...prev, '✓ Step 5: Authority approved dispatch. Crew Team Gamma assigned.']);
+          showToast('Step 5: Team Gamma crew assigned.', 'info');
         }
         break;
       }
       case 5: { // 6. Repair Starts
         if (currentReportId) {
           updateReportStatus(currentReportId, { status: 'Repairing' });
-          setSimLogs(prev => [...prev, '✓ Step 6: City Hall Rapid Unit arrived on-site. Resurfacing active.']);
+          setSimLogs(prev => [...prev, '✓ Step 6: Team Gamma arrived on-site. Resurfacing active.']);
           showToast('Step 6: Resurfacing in progress.', 'info');
         }
         break;
       }
       case 6: { // 7. Repair Completes (Before/After Images Generated)
         if (currentReportId) {
-          const report = reports.find(r => r.id === currentReportId);
           storageResolveReport(currentReportId);
           setSimLogs(prev => [...prev, '✓ Step 7: Asphalt paving complete. Before/After overlay loaded.']);
-          if (report) {
-            showToast(`✓ Completed Task: "${report.title}" has been successfully resolved.`, 'success');
-          } else {
-            showToast('Step 7: Repair completed successfully.', 'success');
-          }
+          showToast('Step 7: Repair completed successfully.', 'success');
         }
         break;
       }
@@ -573,10 +683,10 @@ export function Dashboard() {
     resetDemoState();
     setSimActive(true);
     setSimStep(0);
-
+    
     let step = 0;
     let repId: string | null = null;
-
+    
     repId = runDemoStep(0, null);
 
     simTimerRef.current = setInterval(() => {
@@ -591,7 +701,7 @@ export function Dashboard() {
   };
 
   // Metrics for Impact Dashboard
-  const activeReports = reports.filter(r => !r.resolved && r.status !== 'Resolved');
+  const activeReports = reports.filter(r => !r.resolved);
   const filteredActiveReports = activeReports.filter(r => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
@@ -602,11 +712,11 @@ export function Dashboard() {
       (r.source && r.source.toLowerCase().includes(q))
     );
   });
-  const resolvedReports = reports.filter(r => r.resolved || r.status === 'Resolved');
+  const resolvedReports = reports.filter(r => r.resolved);
   const totalDetectedCount = reports.length;
   const totalRepairedCount = resolvedReports.length;
   const activeCount = activeReports.length;
-
+  
   const calculateSafetyScore = () => {
     let score = 96;
     activeReports.forEach(r => {
@@ -616,25 +726,11 @@ export function Dashboard() {
     });
     return Math.round(Math.min(100, Math.max(45, score)));
   };
-
+  
   const roadSafetyScore = calculateSafetyScore();
-  const estimatedAccidentReduction = totalRepairedCount > 0
-    ? Math.min(88, Math.round(totalRepairedCount * 2.4 + 28))
+  const estimatedAccidentReduction = totalRepairedCount > 0 
+    ? Math.min(88, Math.round(totalRepairedCount * 2.4 + 28)) 
     : 24;
-
-  const calculateMeanResolveTime = () => {
-    const resolvedWithTime = reports.filter(r => r.resolved && r.resolutionTime);
-    if (resolvedWithTime.length === 0) return 42;
-    let totalMins = 0;
-    resolvedWithTime.forEach(r => {
-      const match = r.resolutionTime?.match(/(\d+)/);
-      if (match) {
-        totalMins += parseInt(match[1], 10);
-      }
-    });
-    return Math.round(totalMins / resolvedWithTime.length);
-  };
-  const meanResolveTime = calculateMeanResolveTime();
 
   const selectedReport = reports.find(r => r.id === selectedReportId);
 
@@ -644,90 +740,13 @@ export function Dashboard() {
   const scheduledRepairsReports = activeReports.filter(r => r.status === 'Assigned');
   const activeRepairsReports = activeReports.filter(r => r.status === 'Repairing');
 
-  const getTaskType = (report: Report) => {
-    const title = report.title.toLowerCase();
-    if (report.icon === 'droplets' || title.includes('water') || title.includes('flood')) return 'Drainage';
-    if (report.icon === 'hardhat' || title.includes('debris') || title.includes('divider') || title.includes('work')) return 'Road Works';
-    if (report.icon === 'lightbulb' || title.includes('signal') || title.includes('light')) return 'Traffic Signal';
-    if (report.icon === 'car') return 'Vehicle Hazard';
-    return 'Pothole';
-  };
-
-  const formatHistoryDateTime = (value?: number | string) => {
-    if (!value) return 'N/A';
-    const date = typeof value === 'number' ? new Date(value) : new Date(value);
-    if (Number.isNaN(date.getTime())) return String(value);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const getAssignedTime = (report: Report) => report.assignedAt || report.timestamp;
-  const getStartTime = (report: Report) => report.startedAt || report.assignedAt || report.startDate || report.timestamp;
-  const getCompletionTime = (report: Report) => report.completedAt || report.resolvedAt || report.actualCompletionDate || report.repairDate;
-
-  const getResolutionDuration = (report: Report) => {
-    if (report.resolutionTime) return report.resolutionTime;
-    const start = report.startedAt || report.assignedAt || (report.timestamp ? new Date(report.timestamp).getTime() : 0);
-    const end = report.completedAt || report.resolvedAt;
-    if (!start || !end) return 'N/A';
-    const diffMins = Math.max(1, Math.round((end - start) / 60000));
-    if (diffMins < 60) return `${diffMins} Mins`;
-    const hours = Math.floor(diffMins / 60);
-    const mins = diffMins % 60;
-    return mins ? `${hours}h ${mins}m` : `${hours}h`;
-  };
-
-  const completedTasksHistory = resolvedReports;
-  const historyTeams = ['All', ...Array.from(new Set(completedTasksHistory.map(r => r.assignedTeam || 'Unassigned')))];
-  const historyLocations = ['All', ...Array.from(new Set(completedTasksHistory.map(r => r.location)))];
-  const historySeverities = ['All', ...Array.from(new Set(completedTasksHistory.map(r => r.severity)))];
-  const historyTypes = ['All', ...Array.from(new Set(completedTasksHistory.map(getTaskType)))];
-
-  const filteredCompletedTasksHistory = [...completedTasksHistory]
-    .filter(task => {
-      const taskType = getTaskType(task);
-      const q = historySearchQuery.trim().toLowerCase();
-      const matchesSearch = !q || [
-        task.id,
-        task.title,
-        task.location,
-        task.severity,
-        task.assignedTeam || '',
-        taskType
-      ].some(value => value.toLowerCase().includes(q));
-
-      return (
-        matchesSearch &&
-        (historyTeamFilter === 'All' || (task.assignedTeam || 'Unassigned') === historyTeamFilter) &&
-        (historyLocationFilter === 'All' || task.location === historyLocationFilter) &&
-        (historySeverityFilter === 'All' || task.severity === historySeverityFilter) &&
-        (historyTypeFilter === 'All' || taskType === historyTypeFilter)
-      );
-    })
-    .sort((a, b) => {
-      if (historySortBy === 'team') return (a.assignedTeam || 'Unassigned').localeCompare(b.assignedTeam || 'Unassigned');
-      if (historySortBy === 'location') return a.location.localeCompare(b.location);
-      if (historySortBy === 'severity') return a.severity.localeCompare(b.severity);
-      if (historySortBy === 'type') return getTaskType(a).localeCompare(getTaskType(b));
-      const timeA = a.completedAt || a.resolvedAt || (a.timestamp ? new Date(a.timestamp).getTime() : 0);
-      const timeB = b.completedAt || b.resolvedAt || (b.timestamp ? new Date(b.timestamp).getTime() : 0);
-      return timeB - timeA;
-    });
-
   return (
     <div className="p-6 max-w-[1440px] mx-auto pb-24 animate-fade-in-up space-y-6">
-
+      
       {/* Toast */}
       {justNotification && (
-        <div className={`fixed z-[100] bg-deep-slate text-white px-5 py-4 rounded-xl shadow-2xl flex items-center gap-4 border max-w-sm transition-all duration-300 ${
-          justNotification.type === 'success'
-            ? 'top-6 left-1/2 -translate-x-1/2 animate-fade-in-down border-green-500/30'
-            : `bottom-6 right-6 animate-fade-in-up ${justNotification.type === 'alert' ? 'border-red-500/30' : 'border-white/10'}`
+        <div className={`fixed bottom-6 right-6 z-[100] bg-deep-slate text-white px-5 py-4 rounded-xl shadow-2xl flex items-center gap-4 animate-fade-in-up border max-w-sm transition-all duration-300 ${
+          justNotification.type === 'success' ? 'border-green-500/30' : justNotification.type === 'alert' ? 'border-red-500/30' : 'border-white/10'
         }`}>
           <div className="relative w-3.5 h-3.5 flex-shrink-0">
             {justNotification.type === 'success' ? (
@@ -820,9 +839,9 @@ export function Dashboard() {
             </div>
             <h4 className="text-lg font-bold">{SIM_STEPS[simStep]?.label}</h4>
             <p className="text-xs text-slate-300">{SIM_STEPS[simStep]?.desc}</p>
-
+            
             <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-3 max-w-lg">
-              <div
+              <div 
                 className="bg-orange-500 h-full transition-all duration-300"
                 style={{ width: `${((simStep + 1) / 9) * 100}%` }}
               />
@@ -838,7 +857,7 @@ export function Dashboard() {
             ))}
           </div>
 
-          <button
+          <button 
             onClick={resetDemoState}
             className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer text-white"
           >
@@ -849,10 +868,10 @@ export function Dashboard() {
 
       {/* 3. SPLIT MAIN GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
+        
         {/* Left Columns (Map, KanBan, Before/After) */}
         <div className="lg:col-span-2 space-y-6">
-
+          
           {/* Map Card */}
           <div className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden relative group h-[420px] transition-all hover:shadow-md">
             <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
@@ -860,9 +879,9 @@ export function Dashboard() {
                 <span className="w-2 h-2 rounded-full bg-safety-yellow animate-ping"></span>
                 <span className="text-xs font-bold text-primary">Heatmap View: Central District</span>
               </div>
-
+              
               <div className="flex gap-2">
-                <button
+                <button 
                   onClick={toggleMapLayer}
                   className={`bg-white/95 backdrop-blur shadow-sm hover:bg-white transition-all border border-border-subtle flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer ${
                     mapLayer !== 'satellite' ? 'text-primary border-primary bg-yellow-50/50' : 'text-text-secondary'
@@ -871,95 +890,132 @@ export function Dashboard() {
                 >
                   <Layers className="w-4 h-4" />
                 </button>
-                <button onClick={() => setZoomLevel(prev => Math.min(2.0, prev + 0.25))} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
+                <button onClick={handleZoomIn} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
                   <ZoomIn className="w-4 h-4" />
                 </button>
-                <button onClick={() => setZoomLevel(prev => Math.max(1.0, prev - 0.25))} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
+                <button onClick={handleZoomOut} className="bg-white/95 backdrop-blur shadow-sm w-8 h-8 rounded-lg text-text-secondary flex items-center justify-center cursor-pointer">
                   <ZoomOut className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div
-              className="w-full h-full bg-surface-dim relative overflow-hidden select-none"
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              style={{ cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
-            >
-              <div
-                className={`w-full h-full relative origin-center ${isDragging ? '' : 'transition-transform duration-300 ease-out'}`}
-                style={{ transform: `scale(${zoomLevel}) translate(${mapPan.x / zoomLevel}px, ${mapPan.y / zoomLevel}px)` }}
+            {/* REAL GOOGLE MAP CONTAINER */}
+            {apiLoaded && !isSandboxMode ? (
+              <div ref={mapContainerRef} className="w-full h-full absolute inset-0 z-0 bg-slate-100" />
+            ) : (
+              <div 
+                className="w-full h-full bg-surface-dim relative overflow-hidden select-none"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                style={{ cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
               >
-                <img
-                  className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-102 ${
-                    mapLayer === 'satellite' ? 'grayscale opacity-40' :
-                    mapLayer === 'color' ? 'opacity-85' :
-                    'grayscale opacity-35'
-                  }`}
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuHFT25LrIudFzN9hASHnRgcA8BFks14OkKHmCUQHsIgxP3_efPdHHmYslWisBVEx-kYPAL-txAPhVyEdBWysgahj1JzAnfyT5ZDTy2s0D9OlsRCR4Ptdllch1EeRvlylM3nqORXTkFaZrifD2-giS6p6l0A1aYfo-GaksLZgNQ4RGx2i2L8P3hRQddcA-WQqfF6xLKPU35tm4cCYL8xEECIOHkl-TNtw2HmoENL3JBWVs9vbh25GB2z1RhXII3CXQ_qhCdGJn7lo"
-                  alt="City Grid"
-                  draggable="false"
-                />
+                <div 
+                  className={`w-full h-full relative origin-center ${isDragging ? '' : 'transition-transform duration-300 ease-out'}`}
+                  style={{ transform: `scale(${zoomLevel}) translate(${mapPan.x / zoomLevel}px, ${mapPan.y / zoomLevel}px)` }}
+                >
+                  <img 
+                    className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-102 ${
+                      mapLayer === 'satellite' ? 'grayscale opacity-40' : 
+                      mapLayer === 'color' ? 'opacity-85' : 
+                      'grayscale opacity-35'
+                    }`} 
+                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuHFT25LrIudFzN9hASHnRgcA8BFks14OkKHmCUQHsIgxP3_efPdHHmYslWisBVEx-kYPAL-txAPhVyEdBWysgahj1JzAnfyT5ZDTy2s0D9OlsRCR4Ptdllch1EeRvlylM3nqORXTkFaZrifD2-giS6p6l0A1aYfo-GaksLZgNQ4RGx2i2L8P3hRQddcA-WQqfF6xLKPU35tm4cCYL8xEECIOHkl-TNtw2HmoENL3JBWVs9vbh25GB2z1RhXII3CXQ_qhCdGJn7lo" 
+                    alt="City Grid"
+                    draggable="false"
+                  />
 
-                {mapLayer === 'heatmap' && (
-                  <div className="absolute inset-0 pointer-events-none mix-blend-multiply opacity-80 animate-pulse bg-gradient-to-tr from-red-500/10 via-yellow-500/5 to-transparent">
-                    {filteredActiveReports.map(r => (
-                      <div
-                        key={`heat-${r.id}`}
-                        className="absolute rounded-full filter blur-xl"
-                        style={{
-                          top: `${r.y}%`,
-                          left: `${r.x}%`,
-                          width: r.severity === 'Critical' ? '120px' : '80px',
-                          height: r.severity === 'Critical' ? '120px' : '80px',
-                          transform: 'translate(-50%, -50%)',
-                          backgroundColor: r.severity === 'Critical' ? 'rgba(239, 68, 68, 0.45)' : 'rgba(245, 158, 11, 0.35)',
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
+                  {mapLayer === 'heatmap' && (
+                    <div className="absolute inset-0 pointer-events-none mix-blend-multiply opacity-80 animate-pulse bg-gradient-to-tr from-red-500/10 via-yellow-500/5 to-transparent">
+                      {filteredActiveReports.map(r => (
+                        <div 
+                          key={`heat-${r.id}`}
+                          className="absolute rounded-full filter blur-xl"
+                          style={{
+                            top: `${r.y}%`,
+                            left: `${r.x}%`,
+                            width: r.severity === 'Critical' ? '120px' : '80px',
+                            height: r.severity === 'Critical' ? '120px' : '80px',
+                            transform: 'translate(-50%, -50%)',
+                            backgroundColor: r.severity === 'Critical' ? 'rgba(239, 68, 68, 0.45)' : 'rgba(245, 158, 11, 0.35)',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
 
-                {filteredActiveReports.map((report) => {
-                  const isSelected = selectedReportId === report.id;
-                  const isCritical = report.severity === 'Critical';
-                  const colorClass = isCritical ? 'bg-red-600 border-white text-white' : 'bg-safety-yellow border-black text-primary';
-
-                  return (
-                    <div
-                      key={report.id}
-                      className={`absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 z-20 ${
-                        isSelected ? 'scale-130 z-30' : 'hover:scale-115'
-                      }`}
-                      style={{ top: `${report.y}%`, left: `${report.x}%` }}
-                      onClick={() => setSelectedReportId(report.id)}
-                      onMouseEnter={() => setHoveredReportId(report.id)}
-                      onMouseLeave={() => setHoveredReportId(null)}
-                    >
-                      <div className={`absolute inset-0 rounded-full animate-ping ${isCritical ? 'bg-red-600/30' : 'bg-safety-yellow/30'}`}></div>
-                      <div className={`absolute inset-1 rounded-full border-2 shadow flex items-center justify-center text-xs font-bold ${colorClass}`}>
-                        <span>{isCritical ? '!' : '•'}</span>
-                      </div>
-
-                      {(hoveredReportId === report.id || isSelected) && !selectedReport && (
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[100] w-44 bg-white rounded-lg shadow-xl border border-border-subtle p-2 pointer-events-none animate-fade-in-up">
-                          <p className="text-[10px] font-black text-primary truncate leading-tight">{report.title}</p>
-                          <p className="text-[8px] text-text-secondary mt-0.5 truncate">{report.location}</p>
-                          <div className="flex gap-1.5 items-center mt-1">
-                            <span className="text-[8px] font-bold bg-slate-100 px-1 rounded">{report.status}</span>
-                            <span className="text-[8px] font-bold text-red-500">{report.severity}</span>
-                          </div>
+                  {filteredActiveReports.map((report) => {
+                    const isSelected = selectedReportId === report.id;
+                    const isCritical = report.severity === 'Critical';
+                    const colorClass = isCritical ? 'bg-red-600 border-white text-white' : 'bg-safety-yellow border-black text-primary';
+                    
+                    return (
+                      <div 
+                        key={report.id}
+                        className={`absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 z-20 ${
+                          isSelected ? 'scale-130 z-30' : 'hover:scale-115'
+                        }`}
+                        style={{ top: `${report.y}%`, left: `${report.x}%` }}
+                        onClick={() => setSelectedReportId(report.id)}
+                        onMouseEnter={() => setHoveredReportId(report.id)}
+                        onMouseLeave={() => setHoveredReportId(null)}
+                      >
+                        <div className={`absolute inset-0 rounded-full animate-ping ${isCritical ? 'bg-red-600/30' : 'bg-safety-yellow/30'}`}></div>
+                        <div className={`absolute inset-1 rounded-full border-2 shadow flex items-center justify-center text-xs font-bold ${colorClass}`}>
+                          <span>{isCritical ? '!' : '•'}</span>
                         </div>
+
+                        {(hoveredReportId === report.id || isSelected) && !selectedReport && (
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[100] w-44 bg-white rounded-lg shadow-xl border border-border-subtle p-2 pointer-events-none animate-fade-in-up">
+                            <p className="text-[10px] font-black text-primary truncate leading-tight">{report.title}</p>
+                            <p className="text-[8px] text-text-secondary mt-0.5 truncate">{report.location}</p>
+                          </div>
                       )}
                     </div>
                   );
                 })}
               </div>
             </div>
+          )}
 
-            {selectedReport && (
+          {/* REAL GOOGLE MAP CUSTOM MARKERS */}
+          {apiLoaded && !isSandboxMode && map && filteredActiveReports.map((report) => {
+            const isSelected = selectedReportId === report.id;
+            const isCritical = report.severity === 'Critical';
+            const colorClass = isCritical ? 'bg-red-600 border-white text-white' : 'bg-safety-yellow border-black text-primary';
+            
+            return (
+              <GoogleMapPortalOverlay
+                key={`map-overlay-${report.id}`}
+                map={map}
+                position={{ lat: report.lat || 1.2950, lng: report.lng || 103.8500 }}
+              >
+                <div 
+                  className={`relative w-8 h-8 cursor-pointer transition-all duration-300 z-20 ${
+                    isSelected ? 'scale-130 z-30' : 'hover:scale-115'
+                  }`}
+                  onClick={() => setSelectedReportId(report.id)}
+                  onMouseEnter={() => setHoveredReportId(report.id)}
+                  onMouseLeave={() => setHoveredReportId(null)}
+                >
+                  <div className={`absolute inset-0 rounded-full animate-ping ${isCritical ? 'bg-red-600/30' : 'bg-safety-yellow/30'}`}></div>
+                  <div className={`absolute inset-1 rounded-full border-2 shadow flex items-center justify-center text-xs font-bold ${colorClass}`}>
+                    <span>{isCritical ? '!' : '•'}</span>
+                  </div>
+
+                  {(hoveredReportId === report.id || isSelected) && !selectedReport && (
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-[100] w-44 bg-white rounded-lg shadow-xl border border-border-subtle p-2 pointer-events-none animate-fade-in-up">
+                      <p className="text-[10px] font-black text-primary truncate leading-tight">{report.title}</p>
+                      <p className="text-[8px] text-text-secondary mt-0.5 truncate">{report.location}</p>
+                    </div>
+                  )}
+                </div>
+              </GoogleMapPortalOverlay>
+            );
+          })}
+
+          {selectedReport && (
               <div className="absolute top-4 right-4 z-20 glass-card p-3 rounded-xl max-w-[240px] shadow-lg animate-fade-in-up border border-border-subtle bg-white/95">
                 <div className="flex justify-between items-start mb-1">
                   <h4 className="font-bold text-primary text-xs tracking-tight truncate flex-1">{selectedReport.title}</h4>
@@ -974,20 +1030,14 @@ export function Dashboard() {
                   </span>
                   <span className="text-[8px] bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-medium">{selectedReport.status}</span>
                 </div>
-
-                {selectedReport.status !== 'Resolved' ? (
-                  <button
+                
+                {selectedReport.status !== 'Resolved' && (
+                  <button 
                     onClick={() => handleResolve(selectedReport.id)}
                     className="w-full bg-green-600 text-white hover:bg-green-700 h-7 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
                   >
                     <Check className="w-3 h-3" /> Complete Repair
                   </button>
-                ) : (
-                  localResolvedId === selectedReport.id && (
-                    <div className="w-full bg-green-50 border border-green-200 text-green-700 rounded-lg py-1.5 text-center text-[10px] font-bold flex items-center justify-center gap-1 animate-fade-in-up">
-                      <Check className="w-3.5 h-3.5 text-green-600 animate-pulse" /> Repair Completed!
-                    </div>
-                  )
                 )}
               </div>
             )}
@@ -1003,14 +1053,14 @@ export function Dashboard() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-
+              
               {/* Column 1: Review Issue / Awaiting Review */}
               <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2">
                 <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-text-secondary px-1 border-b pb-1.5">
                   <span>Review Issue</span>
                   <span className="bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[8px]">{pendingReviewReports.length}</span>
                 </div>
-
+                
                 <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
                   {pendingReviewReports.length === 0 ? (
                     <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">All reviewed</div>
@@ -1019,7 +1069,7 @@ export function Dashboard() {
                       <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
                         <div className="text-[10px] font-bold text-primary truncate">{r.title}</div>
                         <div className="text-[9px] text-text-secondary truncate">{r.location}</div>
-                        <button
+                        <button 
                           onClick={() => handleVerify(r.id)}
                           className="w-full bg-slate-900 hover:bg-black text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
                         >
@@ -1048,12 +1098,11 @@ export function Dashboard() {
                           <span>{r.title}</span>
                           <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded">Crit</span>
                         </div>
-                        <button
-                          onClick={() => handleAssign(r.id, getDynamicTeamForReport(r))}
-                          className="w-full bg-safety-yellow hover:opacity-90 text-primary text-[9px] font-black py-1 rounded transition-all cursor-pointer truncate px-1"
-                          title={`Assign ${getDynamicTeamForReport(r)}`}
+                        <button 
+                          onClick={() => handleAssign(r.id)}
+                          className="w-full bg-safety-yellow hover:opacity-90 text-primary text-[9px] font-black py-1 rounded transition-all cursor-pointer"
                         >
-                          Assign {getDynamicTeamForReport(r)}
+                          Assign Team Gamma
                         </button>
                       </div>
                     ))
@@ -1076,7 +1125,7 @@ export function Dashboard() {
                       <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
                         <div className="text-[10px] font-bold text-primary truncate">{r.title}</div>
                         <div className="text-[8px] text-blue-600 font-bold italic truncate">{r.assignedTeam || 'Crew Assigned'}</div>
-                        <button
+                        <button 
                           onClick={() => handleStartRepair(r.id)}
                           className="w-full bg-blue-600 hover:bg-blue-700 text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
                         >
@@ -1089,17 +1138,11 @@ export function Dashboard() {
               </div>
 
               {/* Column 4: Complete Repair */}
-              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2 relative">
+              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2">
                 <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-text-secondary px-1 border-b pb-1.5">
                   <span>Complete Repair</span>
                   <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded text-[8px] animate-pulse">{activeRepairsReports.length}</span>
                 </div>
-
-                {localResolvedMessage && (
-                  <div className="bg-green-50 border border-green-200 text-green-700 text-[10px] font-bold p-2 rounded-lg flex items-center justify-center gap-1.5 animate-fade-in-down shadow-sm">
-                    <Check className="w-3.5 h-3.5 text-green-600 animate-pulse" /> {localResolvedMessage}
-                  </div>
-                )}
 
                 <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
                   {activeRepairsReports.length === 0 ? (
@@ -1109,7 +1152,7 @@ export function Dashboard() {
                       <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
                         <div className="text-[10px] font-bold text-primary truncate">{r.title}</div>
                         <div className="text-[9px] text-text-secondary truncate">{r.location}</div>
-                        <button
+                        <button 
                           onClick={() => handleResolve(r.id)}
                           className="w-full bg-green-600 hover:bg-green-700 text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
                         >
@@ -1144,9 +1187,9 @@ export function Dashboard() {
                     </div>
 
                     {/* Drag-based Image Slider */}
-                    <ImageComparisonSlider
-                      beforeUrl={r.beforeImageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80'}
-                      afterUrl={r.afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80'}
+                    <ImageComparisonSlider 
+                      beforeUrl={r.beforeImageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80'} 
+                      afterUrl={r.afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80'} 
                     />
 
                     <div className="space-y-1 bg-white p-2 rounded border border-border-subtle text-[9px]">
@@ -1168,7 +1211,7 @@ export function Dashboard() {
 
         {/* Right Column (Demo control, Live feed, Risk insights) */}
         <div className="space-y-6">
-
+          
           {/* A. HACKATHON DEMO MODE SIMULATOR */}
           <div className="bg-gradient-to-tr from-red-500/10 via-orange-500/5 to-transparent border border-orange-500/20 rounded-xl p-5 shadow-sm space-y-4">
             <div>
@@ -1179,16 +1222,16 @@ export function Dashboard() {
                 Click below to start the automatic simulation detailing the entire citizen-to-authority safety loop in 2 minutes.
               </p>
             </div>
-
+            
             <div className="flex gap-2">
-              <button
+              <button 
                 onClick={startSimulation}
                 className="flex-grow flex items-center justify-center gap-1.5 bg-gradient-to-r from-red-600 to-orange-500 text-white font-black py-2.5 rounded-lg text-xs shadow hover:shadow-lg hover:scale-102 transition-all duration-200 active:scale-97 cursor-pointer"
               >
                 <Play className="w-3.5 h-3.5 fill-white" /> Activate Simulation
               </button>
-
-              <button
+              
+              <button 
                 onClick={simulateNewHazard}
                 className="bg-white hover:bg-slate-50 text-text-secondary hover:text-primary px-3 rounded-lg border border-border-subtle transition-all active:scale-95 cursor-pointer flex items-center justify-center"
                 title="Simulate isolated citizen upload"
@@ -1220,14 +1263,14 @@ export function Dashboard() {
                 filteredActiveReports.map((report) => {
                   const isSelected = selectedReportId === report.id;
                   const isCritical = report.severity === 'Critical';
-
+                  
                   return (
-                    <div
+                    <div 
                       key={report.id}
                       onClick={() => setSelectedReportId(isSelected ? null : report.id)}
                       className={`p-3 transition-all rounded-xl border flex flex-col cursor-pointer ${
-                        isSelected
-                          ? 'bg-yellow-50/40 border-safety-yellow shadow-md scale-[1.01]'
+                        isSelected 
+                          ? 'bg-yellow-50/40 border-safety-yellow shadow-md scale-[1.01]' 
                           : 'bg-white hover:bg-slate-50 border-border-subtle/50'
                       }`}
                     >
@@ -1237,7 +1280,7 @@ export function Dashboard() {
                         }`}>
                           {report.icon === 'droplets' ? <Droplets className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
                         </div>
-
+                        
                         <div className="flex-grow min-w-0">
                           <div className="flex justify-between items-start mb-0.5">
                             <p className="text-xs font-bold text-primary truncate leading-none">{report.title}</p>
@@ -1253,7 +1296,7 @@ export function Dashboard() {
                       {/* Expandable Panel */}
                       {isSelected && (
                         <div className="mt-3 pt-3 border-t border-border-subtle/70 animate-fade-in-up space-y-3">
-
+                          
                           {/* 1. ROAD STATUS TRACKER */}
                           <div className="space-y-1.5 bg-slate-50 p-2.5 rounded-lg border border-border-subtle">
                             <span className="text-[8px] font-bold uppercase tracking-wider text-text-secondary">Road Status Tracker</span>
@@ -1264,12 +1307,12 @@ export function Dashboard() {
                                 const currentIdx = statuses.indexOf(report.status || 'Detected');
                                 const isPassed = idx <= currentIdx;
                                 const isCurrent = idx === currentIdx;
-
+                                
                                 return (
                                   <div key={step} className="flex flex-col items-center relative z-10">
                                     <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[7px] font-bold transition-all ${
-                                      isPassed
-                                        ? 'bg-green-600 text-white shadow-sm'
+                                      isPassed 
+                                        ? 'bg-green-600 text-white shadow-sm' 
                                         : 'bg-white text-slate-400 border border-slate-200'
                                     } ${isCurrent ? 'ring-2 ring-green-600/30' : ''}`}>
                                       {isPassed ? '✓' : idx + 1}
@@ -1327,16 +1370,16 @@ export function Dashboard() {
                               </div>
                               <span className="text-[8px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded tracking-wide leading-none">{report.severity}</span>
                             </div>
-
+                            
                             <Sparkles className="absolute -right-3 -bottom-3 w-12 h-12 text-white/5 pointer-events-none" />
                           </div>
 
                           <div className="relative w-full h-24 rounded-lg overflow-hidden border border-border-subtle bg-slate-50">
                             <img src={report.imageUrl} alt={report.title} className="w-full h-full object-cover" />
                           </div>
-
-                          {report.status === 'Repairing' ? (
-                            <button
+                          
+                          {report.status === 'Repairing' && (
+                            <button 
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleResolve(report.id);
@@ -1345,12 +1388,6 @@ export function Dashboard() {
                             >
                               <Check className="w-3.5 h-3.5" /> Complete Repair
                             </button>
-                          ) : (
-                            report.status === 'Resolved' && localResolvedId === report.id && (
-                              <div className="w-full bg-green-50 border border-green-200 text-green-700 rounded-lg py-1.5 text-center text-[10px] font-bold flex items-center justify-center gap-1 animate-fade-in-up">
-                                <Check className="w-3.5 h-3.5 text-green-600 animate-pulse" /> Repair Completed!
-                              </div>
-                            )
                           )}
                         </div>
                       )}
@@ -1367,7 +1404,7 @@ export function Dashboard() {
               <h3 className="font-bold text-xs text-primary border-b border-border-subtle pb-2 uppercase tracking-wider flex items-center gap-1.5">
                 <MessageSquare className="w-4 h-4 text-purple-600" /> Citizen Verification System
               </h3>
-
+              
               {selectedReport.citizenVerified ? (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2 text-[10.5px]">
                   <div className="flex justify-between items-center">
@@ -1393,15 +1430,15 @@ export function Dashboard() {
                   <div className="text-[10px] text-text-secondary leading-normal">
                     This repair is resolved. Citizens can verify visual quality, submit ratings, and add notes.
                   </div>
-
+                  
                   {/* Star Rating Select */}
                   <div className="flex gap-1.5 items-center">
                     <span className="text-[9px] font-bold text-text-secondary uppercase">Rate Quality:</span>
                     <div className="flex gap-1">
                       {[1, 2, 3, 4, 5].map(star => (
-                        <button
-                          key={star}
-                          onClick={() => setFeedbackRating(star)}
+                        <button 
+                          key={star} 
+                          onClick={() => setFeedbackRating(star)} 
                           className="text-amber-500 hover:scale-110 transition-transform cursor-pointer"
                         >
                           <Star className={`w-4 h-4 ${star <= feedbackRating ? 'fill-amber-500' : ''}`} />
@@ -1411,10 +1448,10 @@ export function Dashboard() {
                   </div>
 
                   {/* Feedback text */}
-                  <textarea
+                  <textarea 
                     value={feedbackText}
                     onChange={(e) => setFeedbackText(e.target.value)}
-                    placeholder="Enter resolution notes, verify road smoothness..."
+                    placeholder="Enter resolution notes, verify road smoothness..." 
                     className="w-full text-[10px] p-2 bg-slate-50 border border-border-subtle rounded-lg outline-none font-semibold"
                     rows={2}
                   />
@@ -1424,7 +1461,7 @@ export function Dashboard() {
                     <span className="text-[9px] font-bold text-text-secondary">Upload Follow-up Image</span>
                   </div>
 
-                  <button
+                  <button 
                     onClick={() => handleCitizenVerify(selectedReport.id, feedbackRating, feedbackText || 'Verified by Citizen. Excellent repaving work.')}
                     className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold h-8 rounded-lg text-[10px] transition-colors cursor-pointer"
                   >
@@ -1440,7 +1477,7 @@ export function Dashboard() {
             <h3 className="font-bold text-xs text-primary border-b border-border-subtle pb-2 mb-3 uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-4.5 h-4.5 text-purple-600" /> AI Insights Panel
             </h3>
-
+            
             <div className="space-y-3">
               <div className="flex gap-2.5 items-start">
                 <div className="w-2.5 h-2.5 rounded-full bg-purple-500 shrink-0 mt-1" />
@@ -1462,166 +1499,6 @@ export function Dashboard() {
                   Repairing the top 3 hazards could reduce risk by 25%.
                 </p>
               </div>
-            </div>
-
-          </section>
-
-          {/* E. COMPLETED TASKS HISTORY */}
-          <section className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden">
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-700 to-green-500 text-white flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <h3 className="text-[11px] font-black uppercase tracking-widest truncate">Completed Tasks History</h3>
-                </div>
-                <span className="bg-white/20 text-white text-[9px] font-black px-2 py-0.5 rounded-full border border-white/30 shrink-0">
-                  {completedTasksHistory.length} Total
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-                <input
-                  value={historySearchQuery}
-                  onChange={(e) => setHistorySearchQuery(e.target.value)}
-                  placeholder="Search tasks, teams, locations..."
-                  className="h-8 rounded-lg border border-white/25 bg-white/95 px-3 text-[10px] font-bold text-primary outline-none placeholder:text-slate-400"
-                />
-                <select value={historySortBy} onChange={(e) => setHistorySortBy(e.target.value as typeof historySortBy)} className="h-8 rounded-lg border border-white/25 bg-white/95 px-2 text-[10px] font-bold text-primary outline-none">
-                  <option value="date">Sort by completion date</option>
-                  <option value="team">Sort by team</option>
-                  <option value="location">Sort by location</option>
-                  <option value="severity">Sort by severity</option>
-                  <option value="type">Sort by task type</option>
-                </select>
-                <select value={historyTeamFilter} onChange={(e) => setHistoryTeamFilter(e.target.value)} className="h-8 rounded-lg border border-white/25 bg-white/95 px-2 text-[10px] font-bold text-primary outline-none">
-                  {historyTeams.map(team => <option key={team} value={team}>{team === 'All' ? 'All Teams' : team}</option>)}
-                </select>
-                <select value={historyLocationFilter} onChange={(e) => setHistoryLocationFilter(e.target.value)} className="h-8 rounded-lg border border-white/25 bg-white/95 px-2 text-[10px] font-bold text-primary outline-none">
-                  {historyLocations.map(location => <option key={location} value={location}>{location === 'All' ? 'All Locations' : location}</option>)}
-                </select>
-                <select value={historySeverityFilter} onChange={(e) => setHistorySeverityFilter(e.target.value)} className="h-8 rounded-lg border border-white/25 bg-white/95 px-2 text-[10px] font-bold text-primary outline-none">
-                  {historySeverities.map(severity => <option key={severity} value={severity}>{severity === 'All' ? 'All Severities' : severity}</option>)}
-                </select>
-                <select value={historyTypeFilter} onChange={(e) => setHistoryTypeFilter(e.target.value)} className="h-8 rounded-lg border border-white/25 bg-white/95 px-2 text-[10px] font-bold text-primary outline-none">
-                  {historyTypes.map(type => <option key={type} value={type}>{type === 'All' ? 'All Task Types' : type}</option>)}
-                </select>
-              </div>
-            </div>
-
-            <div className="p-3 border-b border-border-subtle bg-slate-50 flex items-center justify-between gap-3">
-              <span className="text-[10px] font-black text-primary uppercase tracking-wider">
-                Showing {filteredCompletedTasksHistory.length} of {completedTasksHistory.length}
-              </span>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => {
-                    setHistorySearchQuery('');
-                    setHistoryTeamFilter('All');
-                    setHistoryLocationFilter('All');
-                    setHistorySeverityFilter('All');
-                    setHistoryTypeFilter('All');
-                    setHistorySortBy('date');
-                  }}
-                  className="text-[9px] font-black text-text-secondary hover:text-primary border border-border-subtle bg-white px-2 py-1 rounded-md transition-colors"
-                >
-                  Clear Filters
-                </button>
-                <button
-                  onClick={handleClearCompletedTasks}
-                  disabled={!isAdminUser || completedTasksHistory.length === 0 || isClearingCompletedTasks}
-                  title={isAdminUser ? 'Delete all completed task history records' : 'Admin access required'}
-                  className={`text-[9px] font-black border px-2 py-1 rounded-md transition-colors ${
-                    !isAdminUser || completedTasksHistory.length === 0 || isClearingCompletedTasks
-                      ? 'bg-slate-100 text-text-secondary/50 border-slate-200 cursor-not-allowed'
-                      : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100 cursor-pointer'
-                  }`}
-                >
-                  {isClearingCompletedTasks ? 'Clearing...' : 'Clear All Completed Tasks'}
-                </button>
-              </div>
-            </div>
-
-            <div className="p-3 space-y-2 max-h-[560px] overflow-y-auto custom-scrollbar">
-              {filteredCompletedTasksHistory.length === 0 ? (
-                <div className="py-10 flex flex-col items-center gap-2 text-center">
-                  <CheckCircle2 className="w-9 h-9 text-slate-200" />
-                  <p className="text-[10px] text-text-secondary font-semibold">No completed tasks match the current filters.</p>
-                  <p className="text-[9px] text-text-secondary/70">Completed repairs are loaded from persistent report storage.</p>
-                </div>
-              ) : (
-                filteredCompletedTasksHistory.map((task) => {
-                  const isExpanded = expandedHistoryTaskId === task.id;
-                  const taskType = getTaskType(task);
-                  const assignedTime = formatHistoryDateTime(getAssignedTime(task));
-                  const startTime = formatHistoryDateTime(getStartTime(task));
-                  const completionTime = formatHistoryDateTime(getCompletionTime(task));
-                  const duration = getResolutionDuration(task);
-
-                  return (
-                    <div key={task.id} className="border border-slate-100 rounded-xl bg-slate-50/70 hover:border-emerald-200 transition-colors overflow-hidden">
-                      <button
-                        onClick={() => setExpandedHistoryTaskId(isExpanded ? null : task.id)}
-                        className="w-full p-3 text-left flex flex-col gap-2 cursor-pointer"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[9px] font-black text-text-secondary bg-white border border-slate-200 rounded px-1.5 py-0.5">{task.id}</span>
-                              <span className="text-[10.5px] font-extrabold text-primary truncate">{task.title}</span>
-                            </div>
-                            <div className="mt-1 flex items-center gap-1 text-[9px] text-text-secondary font-semibold">
-                              <MapPin className="w-3 h-3 shrink-0" />
-                              <span className="truncate">{task.location}</span>
-                            </div>
-                          </div>
-                          <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 border border-emerald-200 text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide shrink-0">
-                            <Check className="w-2.5 h-2.5" /> Completed
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[9px]">
-                          <div><span className="text-text-secondary block">Type</span><strong className="text-primary">{taskType}</strong></div>
-                          <div><span className="text-text-secondary block">Severity</span><strong className="text-primary">{task.severity}</strong></div>
-                          <div><span className="text-text-secondary block">Team</span><strong className="text-primary truncate block">{task.assignedTeam || 'Unassigned'}</strong></div>
-                          <div><span className="text-text-secondary block">Completed</span><strong className="text-emerald-700">{completionTime}</strong></div>
-                        </div>
-                      </button>
-
-                      {isExpanded && (
-                        <div className="px-3 pb-3 pt-1 border-t border-slate-100 bg-white animate-fade-in-up space-y-3">
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[9px]">
-                            <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><span className="text-text-secondary block">Assigned Time</span><strong className="text-primary">{assignedTime}</strong></div>
-                            <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><span className="text-text-secondary block">Start Time</span><strong className="text-primary">{startTime}</strong></div>
-                            <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><span className="text-text-secondary block">Completion Time</span><strong className="text-primary">{completionTime}</strong></div>
-                            <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><span className="text-text-secondary block">Resolution Duration</span><strong className="text-primary">{duration}</strong></div>
-                            <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><span className="text-text-secondary block">Task Name / Hazard Type</span><strong className="text-primary">{task.title} / {taskType}</strong></div>
-                            <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><span className="text-text-secondary block">Status</span><strong className="text-emerald-700">Completed</strong></div>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <span className="text-[8px] font-black text-text-secondary uppercase tracking-wider">Before Image</span>
-                              {task.beforeImageUrl || task.imageUrl ? (
-                                <img src={task.beforeImageUrl || task.imageUrl} alt={`${task.title} before`} className="w-full h-32 object-cover rounded-lg border border-border-subtle" />
-                              ) : (
-                                <div className="h-32 rounded-lg border border-dashed border-border-subtle bg-slate-50 flex items-center justify-center text-[10px] font-bold text-text-secondary">No before image</div>
-                              )}
-                            </div>
-                            <div className="space-y-1">
-                              <span className="text-[8px] font-black text-text-secondary uppercase tracking-wider">After Image</span>
-                              {task.afterImageUrl ? (
-                                <img src={task.afterImageUrl} alt={`${task.title} after`} className="w-full h-32 object-cover rounded-lg border border-border-subtle" />
-                              ) : (
-                                <div className="h-32 rounded-lg border border-dashed border-border-subtle bg-slate-50 flex items-center justify-center text-[10px] font-bold text-text-secondary">No after image</div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
             </div>
           </section>
 
