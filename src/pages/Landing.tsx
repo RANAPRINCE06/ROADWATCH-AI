@@ -49,7 +49,7 @@ export function Landing() {
         </div>
         <div className="flex items-center gap-4">
           <Link to="/login" className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-semibold hover:bg-blue-750 transition-all duration-200 hover:shadow-sm">
-            Launch Platform
+            Sign In/Up
           </Link>
         </div>
       </nav>
