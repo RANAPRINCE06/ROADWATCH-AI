@@ -902,14 +902,23 @@ export function MunicipalOperations() {
                             </button>
                           )}
 
-                          {(comp.status === 'Resolved' || comp.status === 'Closed') && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
-                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
-                            >
-                              Reopen
-                            </button>
+                          {comp.status === 'Resolved' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
+                                className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
+                              >
+                                Reopen
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAdminStatusChange(comp.id, 'Closed')}
+                                className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors border border-slate-900 shadow-sm"
+                              >
+                                Close
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>

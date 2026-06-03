@@ -361,26 +361,39 @@ export function CitizenPortal() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
         if (img.naturalWidth < MIN_IMAGE_DIMENSION || img.naturalHeight < MIN_IMAGE_DIMENSION) {
           setUploadError(`Image resolution ${img.naturalWidth}×${img.naturalHeight}px is too low. Minimum 100×100px required.`);
           setUploadingFile(null);
           return;
         }
         const path = buildUploadPath('complaints', file);
-        uploadFile(path, file, (progress) => { setUploadProgress(progress); })
-          .then((url) => { setUploadedImageUrl(url); setUploadingFile(null); })
-          .catch((err) => {
-            console.error(err);
-            setUploadError('Failed to upload image. Please try again.');
-            setUploadingFile(null);
+        console.info('[CitizenPortal] Complaint image upload started:', { path, fileName: file.name, size: file.size, type: file.type });
+
+        try {
+          const url = await uploadFile(path, file, (progress) => {
+            setUploadProgress(progress);
           });
+          console.info('[CitizenPortal] Complaint image upload completed:', { path, url });
+          setUploadedImageUrl(url);
+        } catch (err) {
+          console.error('[CitizenPortal] Complaint image upload failed:', err);
+          const message = err instanceof Error ? err.message : 'Unknown upload error';
+          setUploadError(`Failed to upload image: ${message}`);
+        } finally {
+          setUploadingFile(null);
+        }
       };
       img.onerror = () => {
         setUploadError('Failed to read image. The file may be corrupted.');
         setUploadingFile(null);
       };
       img.src = ev.target?.result as string;
+    };
+    reader.onerror = () => {
+      console.error('[CitizenPortal] Failed to read selected complaint image:', reader.error);
+      setUploadError('Failed to read image. The file may be corrupted.');
+      setUploadingFile(null);
     };
     reader.readAsDataURL(file);
   };
@@ -413,14 +426,26 @@ export function CitizenPortal() {
     setFollowUpFile(file);
     setFollowUpProgress(0);
 
-    const path = buildUploadPath('followups', file);
-    uploadFile(path, file, (progress) => { setFollowUpProgress(progress); })
-      .then((url) => { setFollowUpImageUrl(url); setFollowUpFile(null); })
-      .catch((err) => {
-        console.error(err);
-        setFollowUpError('Failed to upload image. Please try again.');
+    const uploadFollowUp = async () => {
+      const path = buildUploadPath('followups', file);
+      console.info('[CitizenPortal] Follow-up image upload started:', { path, fileName: file.name, size: file.size, type: file.type });
+
+      try {
+        const url = await uploadFile(path, file, (progress) => {
+          setFollowUpProgress(progress);
+        });
+        console.info('[CitizenPortal] Follow-up image upload completed:', { path, url });
+        setFollowUpImageUrl(url);
+      } catch (err) {
+        console.error('[CitizenPortal] Follow-up image upload failed:', err);
+        const message = err instanceof Error ? err.message : 'Unknown upload error';
+        setFollowUpError(`Failed to upload image: ${message}`);
+      } finally {
         setFollowUpFile(null);
-      });
+      }
+    };
+
+    uploadFollowUp();
   };
 
   // ── SLA countdown timer ────────────────────────────────────────────────────

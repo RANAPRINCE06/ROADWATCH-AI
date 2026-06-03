@@ -342,6 +342,7 @@ export function updateReportStatus(id: string, updates: Partial<Report>): void {
   updateDocument(getDocRef('hazards', id), updates);
 
   const reports = getReports();
+  const report = reports.find(r => r.id === id);
   const index = reports.findIndex(r => r.id === id);
   if (index !== -1) {
     const merged = { ...reports[index], ...updates };
