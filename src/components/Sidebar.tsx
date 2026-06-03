@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   AlertOctagon, 
@@ -17,7 +17,8 @@ import {
   ClipboardList,
   FileText,
   Award,
-  Cpu
+  Cpu,
+  LogOut
 } from 'lucide-react';
 
 const coreLinks = [
@@ -40,6 +41,7 @@ const citizenLinks = [
 
 export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [role, setRole] = React.useState<'admin' | 'citizen'>(() => {
     try {
       const saved = localStorage.getItem('roadwatch_user_profile');
@@ -70,6 +72,12 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
       window.removeEventListener('roadwatch-user-updated', handleUserUpdate);
     };
   }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('roadwatch_user_profile');
+    window.dispatchEvent(new Event('roadwatch-user-updated'));
+    navigate('/login');
+  };
 
   const showLink = (name: string) => {
     if (role === 'citizen') {
@@ -136,13 +144,13 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
       </nav>
 
       <div className="p-4 border-t border-outline-variant flex-shrink-0">
-        <Link 
-          to="/alerts" 
+        <button 
+          onClick={handleLogout}
           className="w-full bg-error text-white py-2.5 rounded-lg flex items-center justify-center gap-2 font-bold active:scale-95 transition-transform shadow-sm hover:bg-red-650 text-xs cursor-pointer"
         >
-          <Zap className="w-4.5 h-4.5" />
-          <span>Emergency Response</span>
-        </Link>
+          <LogOut className="w-4.5 h-4.5" />
+          <span>Log Out</span>
+        </button>
       </div>
     </aside>
   );
