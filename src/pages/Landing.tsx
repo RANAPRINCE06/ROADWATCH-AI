@@ -37,7 +37,7 @@ export function Landing() {
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 flex justify-between items-center h-16 px-8 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm transition-all duration-300">
         <div className="flex items-center gap-2">
-          <Network className="text-blue-600 w-6 h-6" />
+          <img src="/logo.png" alt="RoadWatch AI Logo" className="w-6 h-6 rounded object-cover" />
           <span className="text-base font-bold text-slate-900 tracking-tight">RoadWatch AI</span>
         </div>
         <div className="hidden md:flex items-center gap-8 text-sm font-medium">

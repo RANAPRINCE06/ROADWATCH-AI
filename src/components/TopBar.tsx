@@ -70,6 +70,12 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
     }, 150);
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('roadwatch_user_profile');
+    window.dispatchEvent(new Event('roadwatch-user-updated'));
+    navigate('/login');
+  };
+
   return (
     <header className={`fixed top-0 right-0 z-40 bg-white/80 backdrop-blur-xl border-b border-border-subtle flex justify-between items-center h-16 px-6 shadow-sm transition-all duration-300 ${
       isOpen ? 'w-[calc(100%-240px)]' : 'w-full'
@@ -199,16 +205,35 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
         
         <div className="h-8 w-px bg-outline-variant"></div>
         
-        <div className="flex items-center gap-3 cursor-pointer group" onClick={() => navigate('/settings')}>
-          <div className="text-right">
-            <p className="text-body-sm font-bold leading-tight group-hover:text-primary transition-colors">{profile.name}</p>
-            <p className="text-[11px] text-on-surface-variant opacity-70">{profile.title}</p>
+        {/* Profile Container with Hover Dropdown */}
+        <div className="relative group flex items-center h-16">
+          <div className="flex items-center gap-3 cursor-pointer">
+            <div className="text-right flex flex-col justify-center">
+              <p className="text-body-sm font-bold leading-none text-slate-800 group-hover:text-primary transition-colors">{profile.name}</p>
+              <p className="text-[11px] text-slate-500 mt-1 leading-none">{profile.title}</p>
+            </div>
+            <img 
+              alt="User profile" 
+              className="w-10 h-10 rounded-full border border-border-subtle object-cover" 
+              src={profile.avatarUrl} 
+            />
           </div>
-          <img 
-            alt="User profile" 
-            className="w-10 h-10 rounded-full border border-border-subtle object-cover" 
-            src={profile.avatarUrl} 
-          />
+
+          {/* Dropdown Menu on Hover */}
+          <div className="absolute right-0 top-14 w-40 bg-white rounded-xl shadow-xl border border-slate-200/80 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 p-2 flex flex-col gap-1">
+            <button 
+              onClick={() => navigate('/settings')}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-primary transition-colors cursor-pointer text-left w-full"
+            >
+              Settings
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 transition-colors cursor-pointer text-left w-full"
+            >
+              Log Out
+            </button>
+          </div>
         </div>
       </div>
     </header>

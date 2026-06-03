@@ -24,6 +24,7 @@ const coreLinks = [
   { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { name: 'Live Heatmap', icon: Map, path: '/heatmap' },
   { name: 'Emergency Alerts', icon: Bell, path: '/alerts' },
+  { name: 'Municipal Operations', icon: ShieldCheck, path: '/municipal' },
 ];
 
 const intelligenceLinks = [
@@ -99,9 +100,12 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
       isOpen ? 'translate-x-0' : '-translate-x-full'
     }`}>
       <div className="p-5 flex justify-between items-center border-b border-outline-variant/30 flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-black text-primary leading-tight">ROADWATCH AI</h1>
-          <p className="text-[9px] text-text-secondary uppercase font-bold tracking-widest mt-0.5">Smart City Operations</p>
+        <div className="flex items-center gap-2.5">
+          <img src="/logo.png" alt="RoadWatch AI Logo" className="w-8 h-8 rounded-lg object-cover" />
+          <div>
+            <h1 className="text-sm font-black text-primary leading-tight tracking-wide">ROADWATCH AI</h1>
+            <p className="text-[9px] text-text-secondary uppercase font-bold tracking-widest mt-0.5">Smart Operations</p>
+          </div>
         </div>
         <button 
           onClick={onClose}

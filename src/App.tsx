@@ -21,6 +21,7 @@ import { PredictiveAnalytics } from './pages/PredictiveAnalytics';
 import { AICommandCenter } from './pages/AICommandCenter';
 import { SensorNetwork } from './pages/SensorNetwork';
 import { CitizenPortal } from './pages/CitizenPortal';
+import { MunicipalOperations } from './pages/MunicipalOperations';
 import { GovCommand } from './pages/GovCommand';
 import { AccidentRisk } from './pages/AccidentRisk';
 import { ReportsCenter } from './pages/ReportsCenter';
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/command-center" element={<ProtectedRoute allowedRoles={['authority', 'maintenance', 'citizen']}><Layout><AICommandCenter /></Layout></ProtectedRoute>} />
         <Route path="/sensors" element={<ProtectedRoute allowedRoles={['authority', 'maintenance']}><Layout><SensorNetwork /></Layout></ProtectedRoute>} />
         <Route path="/citizen" element={<ProtectedRoute allowedRoles={['authority', 'citizen']}><Layout><CitizenPortal /></Layout></ProtectedRoute>} />
+        <Route path="/municipal" element={<ProtectedRoute allowedRoles={['authority', 'maintenance']}><Layout><MunicipalOperations /></Layout></ProtectedRoute>} />
         <Route path="/gov-dashboard" element={<ProtectedRoute allowedRoles={['authority', 'maintenance']}><Layout><GovCommand /></Layout></ProtectedRoute>} />
         <Route path="/accident-risk" element={<ProtectedRoute allowedRoles={['authority', 'maintenance']}><Layout><AccidentRisk /></Layout></ProtectedRoute>} />
         <Route path="/reports-center" element={<ProtectedRoute allowedRoles={['authority']}><Layout><ReportsCenter /></Layout></ProtectedRoute>} />

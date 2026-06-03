@@ -353,14 +353,31 @@ export function queryWhere(field: string, op: string, value: any) {
   return realFirebaseActive ? where(field, op as any, value) : { type: 'where', field, op, value };
 }
 
+// Order by constraint
 export function queryOrderBy(field: string, dir: 'asc' | 'desc' = 'asc') {
   return realFirebaseActive ? orderBy(field, dir) : { type: 'orderBy', field, dir };
 }
 
 // Upload File
 export function uploadFile(path: string, file: File, onProgress: (progress: number) => void): Promise<string> {
+  const readAsBase64 = (f: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        onProgress(100);
+        resolve(reader.result as string);
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(f);
+    });
+  };
+
+  if (!realFirebaseActive) {
+    return readAsBase64(file);
+  }
+
   return new Promise((resolve, reject) => {
-    if (realFirebaseActive) {
+    try {
       const storageRef = ref(storage, path);
       const uploadTask = uploadBytesResumable(storageRef, file);
 
@@ -369,33 +386,33 @@ export function uploadFile(path: string, file: File, onProgress: (progress: numb
           const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
           onProgress(progress);
         }, 
-        (error) => {
-          reject(error);
+        async (error) => {
+          console.warn("Real Firebase upload failed, falling back to base64:", error);
+          try {
+            const base64 = await readAsBase64(file);
+            resolve(base64);
+          } catch (fallbackError) {
+            reject(error);
+          }
         }, 
         async () => {
-          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-          resolve(downloadUrl);
+          try {
+            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve(downloadUrl);
+          } catch (err) {
+            console.warn("Real Firebase getDownloadURL failed, falling back to base64:", err);
+            try {
+              const base64 = await readAsBase64(file);
+              resolve(base64);
+            } catch (fallbackError) {
+              reject(err);
+            }
+          }
         }
       );
-    } else {
-      // Mock File Upload via FileReader to base64
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += 25;
-        onProgress(Math.min(99, progress));
-        if (progress >= 100) {
-          clearInterval(interval);
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            onProgress(100);
-            resolve(reader.result as string);
-          };
-          reader.onerror = () => {
-            reject(new Error('FileReader failed'));
-          };
-          reader.readAsDataURL(file);
-        }
-      }, 200);
+    } catch (err) {
+      console.warn("Real Firebase storage initialization failed, falling back to base64:", err);
+      readAsBase64(file).then(resolve).catch(reject);
     }
   });
 }
