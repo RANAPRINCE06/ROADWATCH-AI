@@ -736,7 +736,7 @@ export function Dashboard() {
 
   // Authority Action columns
   const pendingReviewReports = activeReports.filter(r => r.status === 'Detected');
-  const criticalHazardsReports = activeReports.filter(r => r.status === 'Verified' && r.severity === 'Critical');
+  const criticalHazardsReports = activeReports.filter(r => r.status === 'Verified');
   const scheduledRepairsReports = activeReports.filter(r => r.status === 'Assigned');
   const activeRepairsReports = activeReports.filter(r => r.status === 'Repairing');
 
@@ -1090,13 +1090,15 @@ export function Dashboard() {
 
                 <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
                   {criticalHazardsReports.length === 0 ? (
-                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">No criticals pending</div>
+                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">No verified hazards</div>
                   ) : (
                     criticalHazardsReports.map(r => (
                       <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
                         <div className="text-[10px] font-bold text-primary truncate flex justify-between items-center">
                           <span>{r.title}</span>
-                          <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded">Crit</span>
+                          <span className={`text-[8px] px-1 rounded ${r.severity === 'Critical' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                            {r.severity === 'Critical' ? 'Crit' : 'High'}
+                          </span>
                         </div>
                         <button 
                           onClick={() => handleAssign(r.id)}

@@ -158,7 +158,7 @@ const getTimeSince = (dateStr: string) => {
   return `${diffDays} days ago`;
 };
 
-export function CitizenPortal() {
+export function MunicipalOperations() {
   const [lang, setLang] = useState<'en' | 'zh' | 'ms' | 'ta'>('en');
   const [complaints, setComplaints] = useState<CitizenComplaint[]>([]);
   
@@ -173,7 +173,7 @@ export function CitizenPortal() {
   const location = useLocation();
 
   // User role state
-  const isAdmin = false;
+  const isAdmin = true;
 
   // Feedback/Verification fields
   const [citizenRating, setCitizenRating] = useState<number>(5);

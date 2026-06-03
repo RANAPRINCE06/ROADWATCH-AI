@@ -20,6 +20,7 @@ import { PredictiveAnalytics } from './pages/PredictiveAnalytics';
 import { AICommandCenter } from './pages/AICommandCenter';
 import { SensorNetwork } from './pages/SensorNetwork';
 import { CitizenPortal } from './pages/CitizenPortal';
+import { MunicipalOperations } from './pages/MunicipalOperations';
 import { GovCommand } from './pages/GovCommand';
 import { AccidentRisk } from './pages/AccidentRisk';
 import { ReportsCenter } from './pages/ReportsCenter';
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="/command-center" element={<Layout><AICommandCenter /></Layout>} />
         <Route path="/sensors" element={<Layout><SensorNetwork /></Layout>} />
         <Route path="/citizen" element={<Layout><CitizenPortal /></Layout>} />
+        <Route path="/municipal" element={<Layout><MunicipalOperations /></Layout>} />
         <Route path="/gov-dashboard" element={<Layout><GovCommand /></Layout>} />
         <Route path="/accident-risk" element={<Layout><AccidentRisk /></Layout>} />
         <Route path="/reports-center" element={<Layout><ReportsCenter /></Layout>} />

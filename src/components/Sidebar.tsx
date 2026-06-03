@@ -24,7 +24,7 @@ const coreLinks = [
   { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { name: 'Live Heatmap', icon: Map, path: '/heatmap' },
   { name: 'Emergency Alerts', icon: Bell, path: '/alerts' },
-  { name: 'Municipal Operations', icon: ShieldCheck, path: '/citizen?admin=true' },
+  { name: 'Municipal Operations', icon: ShieldCheck, path: '/municipal' },
 ];
 
 const intelligenceLinks = [

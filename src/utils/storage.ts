@@ -152,109 +152,7 @@ export interface SystemSettings {
   aiAnalysisDepth: boolean;
 }
 
-const DEFAULT_REPORTS: Report[] = [
-  {
-    id: 'rep-1',
-    title: 'Severe Pothole',
-    location: 'Sector 4, Orchard Rd',
-    severity: 'Critical',
-    icon: 'alert',
-    source: 'AI Detected',
-    timestamp: new Date(Date.now() - 2 * 60 * 1000).toISOString(), // 2 mins ago
-    x: 35,
-    y: 50,
-    lat: 1.3048,
-    lng: 103.8318,
-    imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-    description: 'Large road crater, depth approx 10cm, causing lane diversions.',
-    status: 'Verified',
-    priorityScore: 92,
-    estimatedRisk: 'High Accident Risk',
-    recommendedRepairTime: 'Within 24 Hours',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-2',
-    title: 'Waterlogging (15cm)',
-    location: 'Bayfront Ave North',
-    severity: 'Critical',
-    icon: 'droplets',
-    source: 'Sensor Report',
-    timestamp: new Date(Date.now() - 12 * 60 * 1000).toISOString(), // 12 mins ago
-    x: 65,
-    y: 30,
-    lat: 1.2847,
-    lng: 103.8590,
-    imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
-    description: 'Water pooling on left lane. Traffic speed reduced to 20 km/h.',
-    status: 'Verified',
-    priorityScore: 89,
-    estimatedRisk: 'Hydroplaning Hazard',
-    recommendedRepairTime: 'Within 24 Hours',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-3',
-    title: 'Missing Divider & Work',
-    location: 'Cross St Junction',
-    severity: 'Active',
-    icon: 'hardhat',
-    source: 'Admin Update',
-    timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1 hour ago
-    x: 80,
-    y: 75,
-    lat: 1.2789,
-    lng: 103.8485,
-    imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
-    description: 'Lane narrowing due to utility maintenance. Ends in 2 days.',
-    status: 'Assigned',
-    priorityScore: 74,
-    estimatedRisk: 'Traffic Bottleneck Risk',
-    recommendedRepairTime: 'Within 3 Days',
-    assignedTeam: 'Team Alpha (Asphalt Resurfacing)',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-4',
-    title: 'Minor Surface Fissures',
-    location: 'Marina Boulevard',
-    severity: 'Pending',
-    icon: 'alert',
-    source: 'Citizen Report',
-    timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), // 3 hours ago
-    x: 20,
-    y: 25,
-    lat: 1.2764,
-    lng: 103.8545,
-    imageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
-    description: 'Cracks widening on shoulder. Scheduled for maintenance next cycle.',
-    status: 'Detected',
-    priorityScore: 48,
-    estimatedRisk: 'Pavement Deterioration',
-    recommendedRepairTime: 'Within 7 Days',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-5',
-    title: 'Drain Overflow Risk',
-    location: 'Geylang Rd Junction',
-    severity: 'Active',
-    icon: 'droplets',
-    source: 'Sensor Report',
-    timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 mins ago
-    x: 50,
-    y: 60,
-    lat: 1.3120,
-    lng: 103.8760,
-    imageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
-    description: 'Drainage debris causing minor water buildup on curbside.',
-    status: 'Verified',
-    priorityScore: 78,
-    estimatedRisk: 'Localized Flooding',
-    recommendedRepairTime: 'Within 48 Hours',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
-  }
-];
+const DEFAULT_REPORTS: Report[] = [];
 
 const DEFAULT_LOGS: TelemetryLog[] = [
   { time: '22:48:10', module: 'GIS Engine', event: 'Google Maps API authorized successfully', status: 'SUCCESS' },
@@ -276,9 +174,15 @@ const DEFAULT_SETTINGS: SystemSettings = {
 // HELPER FUNCTIONS FOR REPORTS
 export function getReports(): Report[] {
   try {
-    const saved = localStorage.getItem('roadwatch_reports');
-    if (saved) {
-      return JSON.parse(saved);
+    const version = localStorage.getItem('roadwatch_version');
+    if (version !== 'v2') {
+      localStorage.removeItem('roadwatch_reports');
+      localStorage.setItem('roadwatch_version', 'v2');
+    } else {
+      const saved = localStorage.getItem('roadwatch_reports');
+      if (saved) {
+        return JSON.parse(saved);
+      }
     }
   } catch (e) {
     console.error('Failed to load reports from localStorage', e);
@@ -375,6 +279,12 @@ export function resolveReport(id: string): void {
 
   updateDocument(getDocRef('hazards', id), updatedFields);
   
+  const index = reports.findIndex(r => r.id === id);
+  if (index !== -1) {
+    reports[index] = { ...reports[index], ...updatedFields };
+    saveReports(reports);
+  }
+  
   // Write repair record
   addRepairRecord({ ...report, ...updatedFields }, 'Resolved');
 
@@ -432,9 +342,12 @@ export function updateReportStatus(id: string, updates: Partial<Report>): void {
   updateDocument(getDocRef('hazards', id), updates);
 
   const reports = getReports();
-  const report = reports.find(r => r.id === id);
-  if (report) {
-    const merged = { ...report, ...updates };
+  const index = reports.findIndex(r => r.id === id);
+  if (index !== -1) {
+    const merged = { ...reports[index], ...updates };
+    reports[index] = merged;
+    saveReports(reports); // Force local storage update and UI re-render
+
     if (updates.status === 'Assigned' || updates.status === 'Repairing') {
       addRepairRecord(merged, updates.status);
     }
