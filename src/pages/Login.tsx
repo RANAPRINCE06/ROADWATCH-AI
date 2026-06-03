@@ -385,9 +385,7 @@ export function Login() {
           {/* Logo & Headline */}
           <div className="mb-6 text-center lg:text-left">
             <div className="flex items-center justify-center lg:justify-start gap-2.5 mb-3">
-              <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center">
-                <Network className="text-white w-5 h-5" />
-              </div>
+              <img src="/logo.png" alt="RoadWatch AI Logo" className="w-9 h-9 rounded-xl object-cover" />
               <span className="text-lg font-black tracking-tight text-slate-900">ROADWATCH AI</span>
             </div>
             <h2 className="text-2xl font-black text-slate-900">Welcome Back</h2>
