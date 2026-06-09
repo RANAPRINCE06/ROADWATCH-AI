@@ -53,6 +53,7 @@ export interface Report {
   citizenFeedback?: string;
   satisfactionScore?: number;
   resolutionQualityScore?: number;
+  citizenRejected?: boolean;
 }
 
 export interface AlertItem {
@@ -291,7 +292,7 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
     x: newReport.x || 50,
     y: newReport.y || 50,
     citizenId: newReport.source || 'System',
-    status: newReport.status === 'Verified' ? 'Verified' : 'Detected',
+    status: newReport.status === 'Verified' ? 'Verified' : 'Submitted',
     priority: newReport.severity === 'Critical' ? 'Critical' : newReport.severity === 'Active' ? 'High' : 'Medium',
     hazardType: newReport.icon === 'droplets' ? 'Waterlogging' : newReport.icon === 'hardhat' ? 'Road Blockage' : 'Large Pothole',
     timestamp: newReport.timestamp,
@@ -569,6 +570,8 @@ export interface CitizenComplaint {
   priority?: 'Critical' | 'High' | 'Medium' | 'Low';
   hazardType?: string;
   notes?: string;
+  priorityScore?: number;
+  assignedTeam?: string;
 
   citizenVerified?: boolean;
   citizenRating?: number;

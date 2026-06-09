@@ -27,6 +27,7 @@ import {
   upvoteComplaint, 
   verifyComplaint, 
   updateComplaint,
+  updateReportStatus,
   CitizenComplaint 
 } from '../utils/storage';
 import {
