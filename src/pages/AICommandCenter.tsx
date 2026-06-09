@@ -24,11 +24,27 @@ export function AICommandCenter() {
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const [reports] = useState<Report[]>(() => getReports());
-  const [sensors] = useState(() => getSensors());
-  const [complaints] = useState(() => getComplaints());
+  const [reports, setReports] = useState<Report[]>(() => getReports());
+  const [sensors, setSensors] = useState(() => getSensors());
+  const [complaints, setComplaints] = useState(() => getComplaints());
 
   const activeReports = reports.filter(r => !r.resolved);
+
+  useEffect(() => {
+    const handleReportsSync = () => setReports(getReports());
+    const handleSensorsSync = () => setSensors(getSensors());
+    const handleComplaintsSync = () => setComplaints(getComplaints());
+
+    window.addEventListener('roadwatch-reports-updated', handleReportsSync);
+    window.addEventListener('roadwatch-sensors-updated', handleSensorsSync);
+    window.addEventListener('roadwatch-complaints-updated', handleComplaintsSync);
+
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleReportsSync);
+      window.removeEventListener('roadwatch-sensors-updated', handleSensorsSync);
+      window.removeEventListener('roadwatch-complaints-updated', handleComplaintsSync);
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {

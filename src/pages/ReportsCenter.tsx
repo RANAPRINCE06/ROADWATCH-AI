@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileText, Download, Share2, Printer, CheckCircle, RefreshCw, Layers, Calendar, ClipboardCheck } from 'lucide-react';
 import { getReports, getSensors, getComplaints } from '../utils/storage';
 
@@ -10,9 +10,25 @@ export function ReportsCenter() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationDone, setGenerationDone] = useState(false);
 
-  const [reports] = useState(() => getReports());
-  const [sensors] = useState(() => getSensors());
-  const [complaints] = useState(() => getComplaints());
+  const [reports, setReports] = useState(() => getReports());
+  const [sensors, setSensors] = useState(() => getSensors());
+  const [complaints, setComplaints] = useState(() => getComplaints());
+
+  useEffect(() => {
+    const handleReportsSync = () => setReports(getReports());
+    const handleSensorsSync = () => setSensors(getSensors());
+    const handleComplaintsSync = () => setComplaints(getComplaints());
+
+    window.addEventListener('roadwatch-reports-updated', handleReportsSync);
+    window.addEventListener('roadwatch-sensors-updated', handleSensorsSync);
+    window.addEventListener('roadwatch-complaints-updated', handleComplaintsSync);
+
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleReportsSync);
+      window.removeEventListener('roadwatch-sensors-updated', handleSensorsSync);
+      window.removeEventListener('roadwatch-complaints-updated', handleComplaintsSync);
+    };
+  }, []);
 
   const activeCount = reports.filter(r => !r.resolved).length;
   const resolvedCount = reports.filter(r => r.resolved).length;
