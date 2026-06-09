@@ -203,7 +203,7 @@ export function LiveHeatmap() {
   const directionsRendererRef = useRef<any>(null);
 
   // Timeline playback state
-  const [timelineVal, setTimelineVal] = useState(65);
+  const [timelineVal, setTimelineVal] = useState(100);
   const [isPlaying, setIsPlaying] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 

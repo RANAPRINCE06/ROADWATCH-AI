@@ -26,7 +26,7 @@ import {
   addComplaint, 
   upvoteComplaint, 
   verifyComplaint, 
-  updateComplaintStatus,
+  updateComplaint,
   CitizenComplaint 
 } from '../utils/storage';
 import {
@@ -208,15 +208,16 @@ export function MunicipalOperations() {
 
   // Listen to complaints in real-time
   useEffect(() => {
-    const colRef = getCollectionRef('complaints');
-    const q = buildQuery(colRef, queryOrderBy('createdAt', 'desc'));
-    const unsubscribe = subscribeToQuery(q, (data) => {
+    const handleSync = () => {
+      const data = getComplaints().sort((a, b) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
       setComplaints(data);
-      if (data.length > 0 && !selectedCompId) {
-        setSelectedCompId(data[0].id);
-      }
-    });
-    return () => unsubscribe();
+      setSelectedCompId(prev => (!prev && data.length > 0) ? data[0].id : prev);
+    };
+    handleSync();
+    window.addEventListener('roadwatch-complaints-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-complaints-updated', handleSync);
+    };
   }, []);
 
   // Listen to notifications in real-time
@@ -362,14 +363,14 @@ export function MunicipalOperations() {
   };
 
   const handleVerify = (id: string) => {
+    const reportId = id.startsWith('comp-from-') ? id.replace('comp-from-', '') : `rep-from-${id}`;
     if (isConfirmed) {
       verifyComplaint(id, citizenRating, citizenFeedback || 'Verified by citizen. Excellent smoothing work.');
-      // Sets status to Closed on confirm
-      updateDocument(getDocRef('complaints', id), { status: 'Closed', citizenVerified: true });
-      updateDocument(getDocRef('reports', `rep-from-${id}`), { resolved: true, status: 'Resolved' });
+      updateComplaint(id, { status: 'Closed', citizenVerified: true });
+      updateReportStatus(reportId, { resolved: true, status: 'Resolved' });
       if (followUpImageUrl) {
-        updateDocument(getDocRef('complaints', id), { followUpImageUrl });
-        updateDocument(getDocRef('reports', `rep-from-${id}`), { afterImageUrl: followUpImageUrl });
+        updateComplaint(id, { followUpImageUrl });
+        updateReportStatus(reportId, { afterImageUrl: followUpImageUrl });
       }
       addDocument(getCollectionRef('notifications'), {
         title: 'Repair Verified & Closed',
@@ -386,7 +387,7 @@ export function MunicipalOperations() {
         citizenRejected: true,
         citizenFeedback: citizenFeedback || 'Repair rejected by citizen. Pavement is still uneven.'
       });
-      updateDocument(getDocRef('reports', `rep-from-${id}`), {
+      updateReportStatus(reportId, {
         status: 'Repairing',
         resolved: false,
         citizenVerified: false,
@@ -411,8 +412,9 @@ export function MunicipalOperations() {
   const handleUpdatePriority = (compId: string, newPriority: 'Critical' | 'High' | 'Medium' | 'Low') => {
     const weights = { 'Critical': 95, 'High': 80, 'Medium': 55, 'Low': 30 };
     const score = weights[newPriority];
-    updateDocument(getDocRef('complaints', compId), { priority: newPriority, priorityScore: score });
-    updateDocument(getDocRef('reports', `rep-from-${compId}`), { 
+    const reportId = compId.startsWith('comp-from-') ? compId.replace('comp-from-', '') : `rep-from-${compId}`;
+    updateComplaint(compId, { priority: newPriority, priorityScore: score });
+    updateReportStatus(reportId, { 
       severity: (newPriority === 'Critical' ? 'Critical' : newPriority === 'High' ? 'Active' : newPriority === 'Medium' ? 'Pending' : 'Scheduled'),
       priorityScore: score
     });
@@ -428,8 +430,9 @@ export function MunicipalOperations() {
     const currentNotes = (complaint as any).notes || '';
     const newNotes = currentNotes ? `${currentNotes}\n[Admin Note]: ${noteText}` : `[Admin Note]: ${noteText}`;
     
-    updateDocument(getDocRef('complaints', compId), { notes: newNotes });
-    updateDocument(getDocRef('reports', `rep-from-${compId}`), { repairNotes: newNotes });
+    const reportId = compId.startsWith('comp-from-') ? compId.replace('comp-from-', '') : `rep-from-${compId}`;
+    updateComplaint(compId, { notes: newNotes });
+    updateReportStatus(reportId, { repairNotes: newNotes });
     setSuccessMsg("Admin note appended successfully.");
     setTimeout(() => setSuccessMsg(null), 3000);
   };
@@ -442,10 +445,10 @@ export function MunicipalOperations() {
     if (teamName) updates.assignedTeam = teamName;
     if (status === 'Resolved') updates.resolvedAt = new Date().toISOString();
 
-    updateDocument(getDocRef('complaints', compId), updates);
+    updateComplaint(compId, updates);
 
     // Sync to report
-    const reportId = `rep-from-${compId}`;
+    const reportId = compId.startsWith('comp-from-') ? compId.replace('comp-from-', '') : `rep-from-${compId}`;
     let reportStatus: any = 'Detected';
     if (status === 'Resolved') reportStatus = 'Resolved';
     else if (status === 'Repairing' || status === 'Repair In Progress') reportStatus = 'Repairing';
@@ -464,7 +467,7 @@ export function MunicipalOperations() {
       reportUpdates.repairDate = todayStr;
     }
 
-    updateDocument(getDocRef('reports', reportId), reportUpdates);
+    updateReportStatus(reportId, reportUpdates);
 
     // Generate notifications
     let notifTitle = '';
