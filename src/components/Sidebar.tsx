@@ -12,7 +12,6 @@ import {
   Zap, 
   ChevronLeft,
   ArrowUpDown,
-  BrainCircuit,
   ShieldAlert,
   ClipboardList,
   FileText,
@@ -29,7 +28,6 @@ const coreLinks = [
 ];
 
 const intelligenceLinks = [
-  { name: 'Road Risk Prediction', icon: BrainCircuit, path: '/predictive' },
   { name: 'Analytics & Reports', icon: BarChart3, path: '/analytics' },
 ];
 
