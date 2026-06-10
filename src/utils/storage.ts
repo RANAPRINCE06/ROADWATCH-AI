@@ -101,6 +101,18 @@ export function saveAlerts(alerts: AlertItem[]): void {
   }
 }
 
+export function addAlert(alert: Omit<AlertItem, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): AlertItem {
+  const newAlert: AlertItem = {
+    ...alert,
+    id: alert.id || `alt-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+    timestamp: alert.timestamp || new Date().toISOString(),
+  };
+
+  setDocument(getDocRef('alerts', newAlert.id), newAlert);
+  saveAlerts([newAlert, ...getAlerts()]);
+  return newAlert;
+}
+
 export function getRepairs(): RepairItem[] {
   try {
     const saved = localStorage.getItem('roadwatch_repairs');
@@ -271,78 +283,76 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
     beforeImageUrl: report.beforeImageUrl || report.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
   };
   
-  // Save to Firestore (hazards collection)
-  setDocument(getDocRef('hazards', newReport.id), newReport);
-  addLog('Incident Reporter', `New hazard reported: ${newReport.title} at ${newReport.location}`, newReport.severity === 'Critical' ? 'WARN' : 'INFO');
-
+  // Persist both local and Firestore reports so the app refreshes immediately
   const reports = getReports();
   reports.unshift(newReport);
   saveReports(reports);
+  setDocument(getDocRef('hazards', newReport.id), newReport);
+  addLog('Incident Reporter', `New hazard reported: ${newReport.title} at ${newReport.location}`, newReport.severity === 'Critical' ? 'WARN' : 'INFO');
 
-  // Sync to Complaints for Municipal Operations
-  const newComplaintId = `comp-from-${newReport.id}`;
-  const newComplaint: CitizenComplaint = {
-    id: newComplaintId,
-    title: newReport.title,
-    description: newReport.description || `Detected Hazard: ${newReport.title}`,
-    locationName: newReport.location,
-    imageUrl: newReport.beforeImageUrl || newReport.imageUrl || '',
-    lat: newReport.lat || 1.2900,
-    lng: newReport.lng || 103.8500,
-    x: newReport.x || 50,
-    y: newReport.y || 50,
-    citizenId: newReport.source || 'System',
-    status: newReport.status === 'Verified' ? 'Verified' : 'Submitted',
-    priority: newReport.severity === 'Critical' ? 'Critical' : newReport.severity === 'Active' ? 'High' : 'Medium',
-    hazardType: newReport.icon === 'droplets' ? 'Waterlogging' : newReport.icon === 'hardhat' ? 'Road Blockage' : 'Large Pothole',
-    timestamp: newReport.timestamp,
-    createdAt: newReport.timestamp,
-    votes: 0,
-    citizenVerified: false,
-    citizenRating: 0,
-    citizenFeedback: '',
-    satisfactionScore: 0,
-    resolutionQualityScore: 0,
-    priorityScore: newReport.priorityScore,
-    assignedTeam: newReport.assignedTeam
-  };
-  setDocument(getDocRef('complaints', newComplaintId), newComplaint);
-
-  const complaints = getComplaints();
-  complaints.unshift(newComplaint);
-  saveComplaints(complaints);
-
-  // Trigger alert if Critical severity
-  if (newReport.severity === 'Critical') {
-    const alertId = `alt-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    let alertType: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
-    const titleLower = newReport.title.toLowerCase();
-    if (newReport.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
-      alertType = 'flood';
-    } else if (newReport.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
-      alertType = 'structural';
-    } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
-      alertType = 'fire';
-    }
-
-    const newAlert: AlertItem = {
-      id: alertId,
-      type: alertType,
+  // Sync to Complaints for Municipal Operations if not already from a complaint
+  if (!newReport.id.startsWith('rep-from-')) {
+    const newComplaintId = `comp-from-${newReport.id}`;
+    const newComplaint: CitizenComplaint = {
+      id: newComplaintId,
       title: newReport.title,
-      location: newReport.location,
-      severity: 'Critical',
-      status: 'Active',
+      description: newReport.description || `Detected Hazard: ${newReport.title}`,
+      locationName: newReport.location,
+      imageUrl: newReport.beforeImageUrl || newReport.imageUrl || '',
+      lat: newReport.lat || 1.2900,
+      lng: newReport.lng || 103.8500,
+      x: newReport.x || 50,
+      y: newReport.y || 50,
+      citizenId: newReport.source || 'System',
+      status: newReport.status === 'Verified' ? 'Verified' : 'Submitted',
+      priority: newReport.severity === 'Critical' ? 'Critical' : newReport.severity === 'Active' ? 'High' : 'Medium',
+      hazardType: newReport.icon === 'droplets' ? 'Waterlogging' : newReport.icon === 'hardhat' ? 'Road Blockage' : 'Large Pothole',
       timestamp: newReport.timestamp,
-      description: newReport.description || `Critical alert: ${newReport.title} at ${newReport.location}`,
-      hazardId: newReport.id
+      createdAt: newReport.timestamp,
+      votes: 0,
+      citizenVerified: false,
+      citizenRating: 0,
+      citizenFeedback: '',
+      satisfactionScore: 0,
+      resolutionQualityScore: 0,
+      priorityScore: newReport.priorityScore,
+      assignedTeam: newReport.assignedTeam
     };
-    setDocument(getDocRef('alerts', alertId), newAlert);
-    
-    const alerts = getAlerts();
-    alerts.unshift(newAlert);
-    saveAlerts(alerts);
+    setDocument(getDocRef('complaints', newComplaintId), newComplaint);
+
+    const complaints = getComplaints();
+    complaints.unshift(newComplaint);
+    saveComplaints(complaints);
   }
 
+  const titleLower = newReport.title.toLowerCase();
+  let alertType: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
+  if (newReport.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
+    alertType = 'flood';
+  } else if (newReport.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
+    alertType = 'structural';
+  } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
+    alertType = 'fire';
+  }
+
+  const alertSeverity: AlertItem['severity'] = newReport.severity === 'Critical'
+    ? 'Critical'
+    : newReport.severity === 'Active'
+      ? 'Major'
+      : 'Minor';
+
+  const newAlert = {
+    title: newReport.title,
+    location: newReport.location,
+    severity: alertSeverity,
+    status: 'Active' as const,
+    timestamp: newReport.timestamp,
+    description: newReport.description || `Reported hazard: ${newReport.title} at ${newReport.location}`,
+    hazardId: newReport.id,
+    type: alertType,
+  };
+
+  addAlert(newAlert);
   return newReport;
 }
 
@@ -710,14 +720,13 @@ export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp
     resolutionQualityScore: 0
   };
 
-  // Write to Firestore complaints collection
+  // Write to Firestore complaints collection and local storage
   setDocument(getDocRef('complaints', id), newComplaint);
-
   const complaints = getComplaints();
   complaints.unshift(newComplaint);
   saveComplaints(complaints);
 
-  // Sync to Reports (create corresponding Report)
+  // Sync to Reports (create corresponding Report) and alert the system
   const matchingReportId = `rep-from-${id}`;
   const newReport: Report = {
     id: matchingReportId,
@@ -739,32 +748,7 @@ export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp
     recommendedRepairTime: (newComplaint.priority === 'Critical' ? 'Within 24 Hours' : newComplaint.priority === 'High' ? 'Within 3 Days' : 'Within 7 Days'),
     beforeImageUrl: newComplaint.imageUrl
   };
-  setDocument(getDocRef('hazards', matchingReportId), newReport);
-
-  const reports = getReports();
-  reports.unshift(newReport);
-  saveReports(reports);
-
-  // Trigger alert if Critical severity
-  if (newReport.severity === 'Critical') {
-    const alertId = `alt-comp-${Date.now()}`;
-    const newAlert: AlertItem = {
-      id: alertId,
-      type: newComplaint.hazardType === 'Waterlogging' ? 'flood' : newComplaint.hazardType === 'Road Blockage' ? 'structural' : 'traffic',
-      title: newReport.title,
-      location: newReport.location,
-      severity: 'Critical',
-      status: 'Active',
-      timestamp: newReport.timestamp,
-      description: newReport.description || `Critical citizen complaint: ${newReport.title}`,
-      hazardId: newReport.id
-    };
-    setDocument(getDocRef('alerts', alertId), newAlert);
-    
-    const alerts = getAlerts();
-    alerts.unshift(newAlert);
-    saveAlerts(alerts);
-  }
+  addReport(newReport);
 
   // Generate notification in Firestore
   addDocument(getCollectionRef('notifications'), {
