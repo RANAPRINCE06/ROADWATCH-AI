@@ -245,7 +245,8 @@ export function getReports(): Report[] {
     } else {
       const saved = localStorage.getItem('roadwatch_reports');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved) as Report[];
+        return parsed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       }
     }
   } catch (e) {
