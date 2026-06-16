@@ -483,13 +483,15 @@ export function MunicipalOperations() {
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
-  const handleAdminStatusChange = (reportId: string, status: Report['status'], teamName?: string) => {
+  const handleAdminStatusChange = (reportId: string, status: Report['status'] | 'Closed', teamName?: string) => {
     const report = reports.find(r => r.id === reportId);
     if (!report) return;
 
-    const updates: Partial<Report> = { status };
+    const updates: Partial<Report> = {
+      status: status === 'Closed' ? 'Resolved' : status
+    };
     if (teamName) updates.assignedTeam = teamName;
-    if (status === 'Resolved' || status === 'Completed') {
+    if (status === 'Resolved' || status === 'Completed' || status === 'Closed') {
       const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       updates.resolved = true;
       updates.actualCompletionDate = todayStr;
@@ -502,11 +504,11 @@ export function MunicipalOperations() {
     const complaintId = reportId.toLowerCase().startsWith('rep-from-') ? reportId.substring(9) : `comp-from-${reportId}`;
     let compStatus: CitizenComplaint['status'] = 'Submitted';
     if (status === 'Resolved' || status === 'Completed') compStatus = 'Resolved';
+    else if (status === 'Closed') compStatus = 'Closed';
     else if (status === 'Repairing' || status === 'In Progress') compStatus = 'Repair In Progress';
     else if (status === 'Assigned') compStatus = 'Assigned';
     else if (status === 'Verified') compStatus = 'Verified';
     else if (status === 'Detected') compStatus = 'Submitted';
-    else if ((status as any) === 'Closed') compStatus = 'Closed';
 
     const compUpdates: Partial<CitizenComplaint> = { status: compStatus };
     if (teamName) compUpdates.assignedTeam = teamName;
@@ -1046,13 +1048,12 @@ export function MunicipalOperations() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleAdminStatusChange(comp.id, 'Closed')}
+                                onClick={() => handleAdminStatusChange(report.id, 'Closed')}
                                 className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors border border-slate-900 shadow-sm"
                               >
                                 Close
                               </button>
                             </>
->>>>>>> 449bb5636fa3da31d0d5d17aa5d8c388a7d5cc2d
                           )}
                         </div>
 

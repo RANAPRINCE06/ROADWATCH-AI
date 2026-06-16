@@ -1018,25 +1018,6 @@ export function Dashboard() {
   return (
     <div className="p-6 max-w-[1440px] mx-auto pb-24 animate-fade-in-up space-y-6">
       
-      {/* Toast */}
-      {justNotification && (
-        <div className={`fixed bottom-6 right-6 z-[100] bg-deep-slate text-white px-5 py-4 rounded-xl shadow-2xl flex items-center gap-4 animate-fade-in-up border max-w-sm transition-all duration-300 ${
-          justNotification.type === 'success' ? 'border-green-500/30' : justNotification.type === 'alert' ? 'border-red-500/30' : 'border-white/10'
-        }`}>
-          <div className="relative w-3.5 h-3.5 flex-shrink-0">
-            {justNotification.type === 'success' ? (
-              <span className="text-green-400">✓</span>
-            ) : justNotification.type === 'alert' ? (
-              <span className="text-red-500 font-bold">!</span>
-            ) : (
-              <span className="text-blue-400">ℹ</span>
-            )}
-          </div>
-          <div className="flex-1 text-xs font-semibold tracking-wide whitespace-pre-line">
-            {justNotification.message}
-          </div>
-        </div>
-      )}
 
       {/* 0. OPERATIONS HEADER */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-slate-900 text-white p-6 rounded-2xl shadow-sm">

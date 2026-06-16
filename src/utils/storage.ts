@@ -477,7 +477,6 @@ export function deleteReport(id: string): void {
 
 export function updateReportStatus(id: string, updates: Partial<Report>): void {
   const reports = getReports();
-  const report = reports.find(r => r.id === id);
   const index = reports.findIndex(r => r.id === id);
   const report = index !== -1 ? reports[index] : undefined;
 
