@@ -68,6 +68,7 @@ export interface Report {
   satisfactionScore?: number;
   resolutionQualityScore?: number;
   resolvedAt?: number;
+  citizenRejected?: boolean;
 }
 
 export interface AlertItem {
@@ -106,6 +107,27 @@ export function getAlerts(): AlertItem[] {
   return [];
 }
 
+export function saveAlerts(alerts: AlertItem[]): void {
+  try {
+    localStorage.setItem('roadwatch_alerts', JSON.stringify(alerts));
+    window.dispatchEvent(new Event('roadwatch-alerts-updated'));
+  } catch (e) {
+    console.error('Failed to save alerts to localStorage', e);
+  }
+}
+
+export function addAlert(alert: Omit<AlertItem, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): AlertItem {
+  const newAlert: AlertItem = {
+    ...alert,
+    id: alert.id || `alt-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+    timestamp: alert.timestamp || new Date().toISOString(),
+  };
+
+  setDocument(getDocRef('alerts', newAlert.id), newAlert);
+  saveAlerts([newAlert, ...getAlerts()]);
+  return newAlert;
+}
+
 export function getRepairs(): RepairItem[] {
   try {
     const saved = localStorage.getItem('roadwatch_repairs');
@@ -132,6 +154,11 @@ export function addRepairRecord(hazard: Report, status: 'Assigned' | 'Repairing'
     notes: hazard.repairNotes || ''
   };
   setDocument(getDocRef('repairs', repairId), record);
+  
+  const repairs = getRepairs();
+  repairs.unshift(record);
+  localStorage.setItem('roadwatch_repairs', JSON.stringify(repairs));
+  window.dispatchEvent(new Event('roadwatch-repairs-updated'));
 }
 
 export function resolveAlertForHazard(hazardId: string) {
@@ -139,6 +166,8 @@ export function resolveAlertForHazard(hazardId: string) {
   const matchingAlert = alerts.find(a => a.hazardId === hazardId);
   if (matchingAlert) {
     updateDocument(getDocRef('alerts', matchingAlert.id), { status: 'Resolved' });
+    matchingAlert.status = 'Resolved';
+    saveAlerts(alerts);
   }
 }
 
@@ -146,8 +175,18 @@ export function acknowledgeAlert(alertId: string) {
   updateDocument(getDocRef('alerts', alertId), { status: 'Acknowledged' });
   const alerts = getAlerts();
   const alert = alerts.find(a => a.id === alertId);
-  if (alert && alert.hazardId) {
-    updateDocument(getDocRef('hazards', alert.hazardId), { acknowledged: true });
+  if (alert) {
+    alert.status = 'Acknowledged';
+    saveAlerts(alerts);
+    if (alert.hazardId) {
+      updateDocument(getDocRef('hazards', alert.hazardId), { acknowledged: true });
+      const reports = getReports();
+      const report = reports.find(r => r.id === alert.hazardId);
+      if (report) {
+        report.acknowledged = true;
+        saveReports(reports);
+      }
+    }
   }
 }
 
@@ -168,6 +207,31 @@ export interface SystemSettings {
 }
 
 const DEFAULT_REPORTS: Report[] = [];
+
+const DEFAULT_ALERTS: AlertItem[] = [
+  {
+    id: 'alt-101',
+    type: 'flood',
+    title: 'Waterlogging: East Coast Expressway',
+    location: 'Bayfront Connector',
+    severity: 'Critical',
+    status: 'Active',
+    timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
+    description: 'Heavy precipitation causing roadside pooling on lanes 3 and 4. Speeds capped at 40km/h.',
+    hazardId: 'rep-default-1'
+  },
+  {
+    id: 'alt-102',
+    type: 'structural',
+    title: 'Subsidence: Bridge Support Settling',
+    location: 'Downtown Expressway Pillar 4',
+    severity: 'Critical',
+    status: 'Active',
+    timestamp: new Date(Date.now() - 45 * 60000).toISOString(),
+    description: 'AI telemetry reports a 3cm settlement. Structural engineers dispatched for visual safety inspections.',
+    hazardId: 'rep-default-2'
+  }
+];
 
 const DEFAULT_LOGS: TelemetryLog[] = [
   { time: '22:48:10', module: 'GIS Engine', event: 'Google Maps API authorized successfully', status: 'SUCCESS' },
@@ -196,7 +260,8 @@ export function getReports(): Report[] {
     } else {
       const saved = localStorage.getItem('roadwatch_reports');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved) as Report[];
+        return parsed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       }
     }
   } catch (e) {
@@ -236,37 +301,76 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
     beforeImageUrl: report.beforeImageUrl || report.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
   };
   
-  // Save to Firestore (hazards collection)
+  // Persist both local and Firestore reports so the app refreshes immediately
+  const reports = getReports();
+  reports.unshift(newReport);
+  saveReports(reports);
   setDocument(getDocRef('hazards', newReport.id), newReport);
   addLog('Incident Reporter', `New hazard reported: ${newReport.title} at ${newReport.location}`, newReport.severity === 'Critical' ? 'WARN' : 'INFO');
 
-  // Trigger alert if Critical severity
-  if (newReport.severity === 'Critical') {
-    const alertId = `alt-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    let alertType: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
-    const titleLower = newReport.title.toLowerCase();
-    if (newReport.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
-      alertType = 'flood';
-    } else if (newReport.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
-      alertType = 'structural';
-    } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
-      alertType = 'fire';
-    }
-
-    const newAlert: AlertItem = {
-      id: alertId,
-      type: alertType,
+  // Sync to Complaints for Municipal Operations if not already from a complaint
+  if (!newReport.id.startsWith('rep-from-')) {
+    const newComplaintId = `comp-from-${newReport.id}`;
+    const newComplaint: CitizenComplaint = {
+      id: newComplaintId,
       title: newReport.title,
-      location: newReport.location,
-      severity: 'Critical',
-      status: 'Active',
+      description: newReport.description || `Detected Hazard: ${newReport.title}`,
+      locationName: newReport.location,
+      imageUrl: newReport.beforeImageUrl || newReport.imageUrl || '',
+      lat: newReport.lat || 1.2900,
+      lng: newReport.lng || 103.8500,
+      x: newReport.x || 50,
+      y: newReport.y || 50,
+      citizenId: newReport.source || 'System',
+      status: newReport.status === 'Verified' ? 'Verified' : 'Submitted',
+      priority: newReport.severity === 'Critical' ? 'Critical' : newReport.severity === 'Active' ? 'High' : 'Medium',
+      hazardType: newReport.icon === 'droplets' ? 'Waterlogging' : newReport.icon === 'hardhat' ? 'Road Blockage' : 'Large Pothole',
       timestamp: newReport.timestamp,
-      description: newReport.description || `Critical alert: ${newReport.title} at ${newReport.location}`,
-      hazardId: newReport.id
+      createdAt: newReport.timestamp,
+      votes: 0,
+      citizenVerified: false,
+      citizenRating: 0,
+      citizenFeedback: '',
+      satisfactionScore: 0,
+      resolutionQualityScore: 0,
+      priorityScore: newReport.priorityScore,
+      assignedTeam: newReport.assignedTeam
     };
-    setDocument(getDocRef('alerts', alertId), newAlert);
+    setDocument(getDocRef('complaints', newComplaintId), newComplaint);
+
+    const complaints = getComplaints();
+    complaints.unshift(newComplaint);
+    saveComplaints(complaints);
   }
 
+  const titleLower = newReport.title.toLowerCase();
+  let alertType: 'fire' | 'flood' | 'structural' | 'traffic' = 'traffic';
+  if (newReport.icon === 'droplets' || titleLower.includes('waterlogging') || titleLower.includes('flood')) {
+    alertType = 'flood';
+  } else if (newReport.icon === 'hardhat' || titleLower.includes('divider') || titleLower.includes('structure') || titleLower.includes('subsidence')) {
+    alertType = 'structural';
+  } else if (titleLower.includes('fire') || titleLower.includes('temperature') || titleLower.includes('thermal')) {
+    alertType = 'fire';
+  }
+
+  const alertSeverity: AlertItem['severity'] = newReport.severity === 'Critical'
+    ? 'Critical'
+    : newReport.severity === 'Active'
+      ? 'Major'
+      : 'Minor';
+
+  const newAlert = {
+    title: newReport.title,
+    location: newReport.location,
+    severity: alertSeverity,
+    status: 'Active' as const,
+    timestamp: newReport.timestamp,
+    description: newReport.description || `Reported hazard: ${newReport.title} at ${newReport.location}`,
+    hazardId: newReport.id,
+    type: alertType,
+  };
+
+  addAlert(newAlert);
   return newReport;
 }
 
@@ -323,10 +427,8 @@ export function resolveReport(id: string): void {
   resolveAlertForHazard(id);
 
   // Sync back to corresponding CitizenComplaint
-  if (id.startsWith('rep-from-comp-')) {
-    const complaintId = id.replace('rep-from-', '');
-    updateComplaintStatus(complaintId, 'Resolved');
-  }
+  const complaintId = id.startsWith('rep-from-') ? id.replace('rep-from-', '') : `comp-from-${id}`;
+  updateComplaint(complaintId, { status: 'Resolved' });
 
   addLog('Maintenance Dispatch', `Hazard resolved: ${report.title} at ${report.location}`, 'SUCCESS');
 }
@@ -343,20 +445,14 @@ export function verifyRepair(id: string, rating: number, feedback: string): void
   updateDocument(getDocRef('hazards', id), updatedFields);
 
   // Sync to complaint
-  if (id.toLowerCase().startsWith('rep-from-comp-')) {
-    const complaintId = id.toLowerCase().replace('rep-from-', '');
-    const complaints = getComplaints();
-    const complaint = complaints.find(c => c.id.toLowerCase() === complaintId);
-    if (complaint) {
-      updateDocument(getDocRef('complaints', complaint.id), {
-        citizenVerified: true,
-        citizenRating: rating,
-        citizenFeedback: feedback,
-        satisfactionScore: rating * 20,
-        resolutionQualityScore: Math.min(100, Math.round(85 + rating * 3))
-      });
-    }
-  }
+  const complaintId = id.toLowerCase().startsWith('rep-from-') ? id.substring(9) : `comp-from-${id}`;
+  updateComplaint(complaintId, {
+    citizenVerified: true,
+    citizenRating: rating,
+    citizenFeedback: feedback,
+    satisfactionScore: rating * 20,
+    resolutionQualityScore: Math.min(100, Math.round(85 + rating * 3))
+  });
 
   const reports = getReports();
   const report = reports.find(r => r.id === id);
@@ -367,10 +463,21 @@ export function verifyRepair(id: string, rating: number, feedback: string): void
 
 export function deleteReport(id: string): void {
   deleteDocument(getDocRef('hazards', id));
+  const reports = getReports();
+  saveReports(reports.filter(r => r.id !== id));
+
+  // Also delete corresponding alert
+  const alerts = getAlerts();
+  const alertToDelete = alerts.find(a => a.hazardId === id);
+  if (alertToDelete) {
+    deleteDocument(getDocRef('alerts', alertToDelete.id));
+    saveAlerts(alerts.filter(a => a.hazardId !== id));
+  }
 }
 
 export function updateReportStatus(id: string, updates: Partial<Report>): void {
   const reports = getReports();
+  const report = reports.find(r => r.id === id);
   const index = reports.findIndex(r => r.id === id);
   const report = index !== -1 ? reports[index] : undefined;
 
@@ -492,8 +599,8 @@ export function updateReportStatus(id: string, updates: Partial<Report>): void {
   }
 
   // Sync status changes back to CitizenComplaint
-  if (id.toLowerCase().startsWith('rep-from-comp-') && updates.status) {
-    const complaintId = id.toLowerCase().replace('rep-from-', '');
+  const complaintId = id.toLowerCase().startsWith('rep-from-') ? id.substring(9) : `comp-from-${id}`;
+  if (updates.status) {
     let compStatus: CitizenComplaint['status'] = 'Submitted';
     if (updates.status === 'Resolved' || updates.status === 'Completed') compStatus = 'Resolved';
     else if (updates.status === 'Repairing' || updates.status === 'In Progress') compStatus = 'Repair In Progress';
@@ -501,7 +608,7 @@ export function updateReportStatus(id: string, updates: Partial<Report>): void {
     else if (updates.status === 'Verified') compStatus = 'Verified';
     else if (updates.status === 'Detected') compStatus = 'Submitted';
     
-    updateComplaintStatus(complaintId, compStatus);
+    updateComplaint(complaintId, { status: compStatus });
   }
 
   if (report) {
@@ -609,6 +716,8 @@ export interface CitizenComplaint {
   priority?: 'Critical' | 'High' | 'Medium' | 'Low';
   hazardType?: string;
   notes?: string;
+  priorityScore?: number;
+  assignedTeam?: string;
 
   citizenVerified?: boolean;
   citizenRating?: number;
@@ -711,6 +820,16 @@ export function getComplaints(): CitizenComplaint[] {
   return DEFAULT_COMPLAINTS;
 }
 
+export function updateComplaint(id: string, updates: Partial<CitizenComplaint>): void {
+  updateDocument(getDocRef('complaints', id), updates);
+  const complaints = getComplaints();
+  const index = complaints.findIndex(c => c.id === id);
+  if (index !== -1) {
+    complaints[index] = { ...complaints[index], ...updates };
+    saveComplaints(complaints);
+  }
+}
+
 export function saveComplaints(complaints: CitizenComplaint[]): void {
   try {
     localStorage.setItem('roadwatch_complaints', JSON.stringify(complaints));
@@ -737,10 +856,13 @@ export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp
     resolutionQualityScore: 0
   };
 
-  // Write to Firestore complaints collection
+  // Write to Firestore complaints collection and local storage
   setDocument(getDocRef('complaints', id), newComplaint);
+  const complaints = getComplaints();
+  complaints.unshift(newComplaint);
+  saveComplaints(complaints);
 
-  // Sync to Reports (create corresponding Report)
+  // Sync to Reports (create corresponding Report) and alert the system
   const matchingReportId = `rep-from-${id}`;
   const newReport: Report = {
     id: matchingReportId,
@@ -762,7 +884,7 @@ export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp
     recommendedRepairTime: (newComplaint.priority === 'Critical' ? 'Within 24 Hours' : newComplaint.priority === 'High' ? 'Within 3 Days' : 'Within 7 Days'),
     beforeImageUrl: newComplaint.imageUrl
   };
-  setDocument(getDocRef('hazards', matchingReportId), newReport);
+  addReport(newReport);
 
   // Generate notification in Firestore
   addDocument(getCollectionRef('notifications'), {
@@ -1106,9 +1228,17 @@ subscribeToQuery(buildQuery(getCollectionRef('sensors')), (firebaseSensors) => {
 });
 
 // Subscribe to Alerts in real-time
+let seededAlerts = false;
 subscribeToQuery(buildQuery(getCollectionRef('alerts'), queryOrderBy('timestamp', 'desc')), (firebaseAlerts) => {
-  localStorage.setItem('roadwatch_alerts', JSON.stringify(firebaseAlerts));
-  window.dispatchEvent(new Event('roadwatch-alerts-updated'));
+  if (firebaseAlerts.length === 0 && !seededAlerts) {
+    seededAlerts = true;
+    DEFAULT_ALERTS.forEach(a => {
+      setDocument(getDocRef('alerts', a.id), a);
+    });
+  } else {
+    localStorage.setItem('roadwatch_alerts', JSON.stringify(firebaseAlerts));
+    window.dispatchEvent(new Event('roadwatch-alerts-updated'));
+  }
 });
 
 // Subscribe to Repairs in real-time

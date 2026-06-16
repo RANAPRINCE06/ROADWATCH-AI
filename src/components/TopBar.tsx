@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Bell, Bot, MapPin, Menu, Play, AlertTriangle, X } from 'lucide-react';
+import { Search, Bell, MapPin, Menu, Play, AlertTriangle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getReports, Report } from '../utils/storage';
 
@@ -214,14 +214,7 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
             )}
           </div>
 
-          <button 
-            onClick={onToggleChat}
-            className={`text-on-surface-variant hover:text-primary transition-all flex items-center justify-center p-1.5 rounded-full hover:bg-surface-container-low cursor-pointer ${isChatOpen ? 'bg-surface-container-low text-primary' : ''}`}
-            title="AI Chat Assistant"
-          >
-            <Bot className="w-5 h-5" />
-          </button>
-          
+
           <button 
             onClick={handleResetMap}
             className="text-on-surface-variant hover:text-primary transition-all flex items-center justify-center p-1.5 rounded-full hover:bg-surface-container-low cursor-pointer"
@@ -263,21 +256,6 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
             />
           </div>
 
-          {/* Dropdown Menu on Hover */}
-          <div className="absolute right-0 top-14 w-40 bg-white rounded-xl shadow-xl border border-slate-200/80 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 p-2 flex flex-col gap-1">
-            <button 
-              onClick={() => navigate('/settings')}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-primary transition-colors cursor-pointer text-left w-full"
-            >
-              Settings
-            </button>
-            <button 
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 transition-colors cursor-pointer text-left w-full"
-            >
-              Log Out
-            </button>
-          </div>
         </div>
       </div>
     </header>

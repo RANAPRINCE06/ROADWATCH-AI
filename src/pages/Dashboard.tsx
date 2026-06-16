@@ -328,10 +328,7 @@ export function Dashboard() {
   const [feedbackText, setFeedbackText] = useState<string>('');
   const [feedbackRating, setFeedbackRating] = useState<number>(5);
 
-  const [justNotification, setJustNotification] = useState<{
-    message: string;
-    type: 'alert' | 'success' | 'info';
-  } | null>(null);
+
 
   // Map settings
   const [mapLayer, setMapLayer] = useState<'satellite' | 'color' | 'heatmap'>('satellite');
@@ -670,8 +667,7 @@ export function Dashboard() {
   };
 
   const showToast = (message: string, type: 'alert' | 'success' | 'info' = 'info') => {
-    setJustNotification({ message, type });
-    setTimeout(() => setJustNotification(null), 4000);
+    window.dispatchEvent(new CustomEvent('roadwatch-toast', { detail: { message, type } }));
   };
 
   // Authority Action Panel operations

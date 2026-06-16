@@ -1005,10 +1005,10 @@ If 'isRoadHazardImage' is false, populate the remaining fields with default valu
                 </button>
                 {submitted && (
                   <button
-                    onClick={() => window.location.href = '/dashboard'}
+                    onClick={() => window.location.href = '/heatmap'}
                     className="w-full mt-3 font-bold py-3 rounded-lg text-sm bg-primary text-white hover:bg-black/90 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm animate-fade-in-up"
                   >
-                    View on Dashboard ➔
+                    View on Live Heatmap ➔
                   </button>
                 )}
                 <p className="text-center text-[11px] text-on-surface-variant px-4 leading-relaxed mt-4">

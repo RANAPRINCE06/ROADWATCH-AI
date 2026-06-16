@@ -190,6 +190,14 @@ if (!realFirebaseActive) {
 
 const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 const realGeminiActive = !!(geminiApiKey && geminiApiKey !== 'YOUR_GEMINI_API_KEY' && geminiApiKey !== 'MY_GEMINI_API_KEY');
+const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || '';
+const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || '';
+const cloudinaryActive = Boolean(
+  cloudinaryCloudName &&
+  cloudinaryUploadPreset &&
+  cloudinaryCloudName !== 'YOUR_CLOUDINARY_CLOUD_NAME' &&
+  cloudinaryUploadPreset !== 'YOUR_UNSIGNED_UPLOAD_PRESET'
+);
 
 export { db, storage, auth, realFirebaseActive, realGeminiActive, geminiApiKey };
 
@@ -458,61 +466,139 @@ export function queryOrderBy(field: string, dir: 'asc' | 'desc' = 'asc') {
   return realFirebaseActive ? orderBy(field, dir) : { type: 'orderBy', field, dir };
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return JSON.stringify(error);
+}
+
 // Upload File
-export function uploadFile(path: string, file: File, onProgress: (progress: number) => void): Promise<string> {
+export async function uploadFile(path: string, file: File, onProgress: (progress: number) => void): Promise<string> {
   const readAsBase64 = (f: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         onProgress(100);
+        console.info('[uploadFile] Base64 fallback completed:', { path, fileName: f.name, size: f.size });
         resolve(reader.result as string);
       };
-      reader.onerror = () => reject(reader.error);
+      reader.onerror = () => reject(reader.error || new Error('FileReader failed while reading upload file.'));
+      reader.onabort = () => reject(new Error('FileReader upload fallback was aborted.'));
       reader.readAsDataURL(f);
     });
   };
 
+  console.info('[uploadFile] Starting upload:', {
+    path,
+    fileName: file.name,
+    size: file.size,
+    type: file.type,
+    cloudinaryConfigured: cloudinaryActive,
+    firebaseConfigured: realFirebaseActive
+  });
+
+  if (cloudinaryActive) {
+    try {
+      const folder = path.includes('/') ? path.split('/').slice(0, -1).join('/') : 'roadwatch';
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', cloudinaryUploadPreset);
+      formData.append('folder', folder || 'roadwatch');
+
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
+        method: 'POST',
+        body: formData
+      });
+      const payload = await response.json().catch(() => null);
+      console.info('[uploadFile] Cloudinary response:', payload);
+
+      if (!response.ok) {
+        const message = payload?.error?.message || response.statusText || 'Cloudinary upload failed.';
+        throw new Error(message);
+      }
+
+      const imageUrl = payload?.secure_url || payload?.url;
+      if (!imageUrl) {
+        throw new Error('Cloudinary upload succeeded but did not return secure_url.');
+      }
+
+      onProgress(100);
+      return imageUrl;
+    } catch (error) {
+      console.error('[uploadFile] Cloudinary upload error:', getErrorMessage(error), error);
+      throw error;
+    }
+  } else {
+    console.warn('[uploadFile] Cloudinary is not configured. Expected VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET.');
+  }
+
   if (!realFirebaseActive) {
+    console.warn('[uploadFile] Firebase Storage is not configured. Using base64 fallback.');
     return readAsBase64(file);
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (unsubscribe) unsubscribe();
+      callback();
+    };
+
+    const timeoutId = window.setTimeout(async () => {
+      console.error('[uploadFile] Firebase upload timed out at uploadBytesResumable state_changed listener:', { path });
+      try {
+        const base64 = await readAsBase64(file);
+        settle(() => resolve(base64));
+      } catch (fallbackError) {
+        settle(() => reject(fallbackError));
+      }
+    }, 30000);
+
     try {
       const storageRef = ref(storage, path);
       const uploadTask = uploadBytesResumable(storageRef, file);
 
-      uploadTask.on('state_changed', 
+      unsubscribe = uploadTask.on('state_changed', 
         (snapshot) => {
           const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          console.info('[uploadFile] Firebase upload progress:', { path, progress });
           onProgress(progress);
         }, 
         async (error) => {
-          console.warn("Real Firebase upload failed, falling back to base64:", error);
+          console.error('[uploadFile] Firebase upload error:', getErrorMessage(error), error);
           try {
             const base64 = await readAsBase64(file);
-            resolve(base64);
+            settle(() => resolve(base64));
           } catch (fallbackError) {
-            reject(error);
+            settle(() => reject(fallbackError));
           }
         }, 
         async () => {
           try {
             const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve(downloadUrl);
+            console.info('[uploadFile] Firebase upload response:', { path, downloadUrl });
+            settle(() => resolve(downloadUrl));
           } catch (err) {
-            console.warn("Real Firebase getDownloadURL failed, falling back to base64:", err);
+            console.error('[uploadFile] Firebase getDownloadURL error:', getErrorMessage(err), err);
             try {
               const base64 = await readAsBase64(file);
-              resolve(base64);
+              settle(() => resolve(base64));
             } catch (fallbackError) {
-              reject(err);
+              settle(() => reject(fallbackError));
             }
           }
         }
       );
     } catch (err) {
-      console.warn("Real Firebase storage initialization failed, falling back to base64:", err);
-      readAsBase64(file).then(resolve).catch(reject);
+      console.error('[uploadFile] Firebase storage initialization error:', getErrorMessage(err), err);
+      readAsBase64(file)
+        .then((base64) => settle(() => resolve(base64)))
+        .catch((fallbackError) => settle(() => reject(fallbackError)));
     }
   });
 }

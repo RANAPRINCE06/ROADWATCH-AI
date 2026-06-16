@@ -27,11 +27,12 @@ import {
   addComplaint, 
   upvoteComplaint, 
   verifyComplaint, 
-  updateComplaintStatus,
+  updateComplaint,
+  updateReportStatus,
   CitizenComplaint,
   Report,
   getReports,
-  updateReportStatus
+  updateComplaintStatus
 } from '../utils/storage';
 import {
   getCollectionRef,
@@ -225,16 +226,17 @@ export function MunicipalOperations() {
 
   // Listen to complaints in real-time
   useEffect(() => {
-    const colRef = getCollectionRef('complaints');
-    const q = buildQuery(colRef, queryOrderBy('createdAt', 'desc'));
-    const unsubscribe = subscribeToQuery(q, (data) => {
+    const handleSync = () => {
+      const data = getComplaints().sort((a, b) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
       setComplaints(data);
-      if (data.length > 0 && !selectedCompId) {
-        setSelectedCompId(data[0].id);
-      }
-    });
-    return () => unsubscribe();
-  }, [selectedCompId]);
+      setSelectedCompId(prev => (!prev && data.length > 0) ? data[0].id : prev);
+    };
+    handleSync();
+    window.addEventListener('roadwatch-complaints-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-complaints-updated', handleSync);
+    };
+  }, []);
 
   // Prevent background page scrolling when modal is open
   useEffect(() => {
@@ -250,16 +252,17 @@ export function MunicipalOperations() {
 
   // Listen to hazards (reports) in real-time
   useEffect(() => {
-    const colRef = getCollectionRef('hazards');
-    const q = buildQuery(colRef, queryOrderBy('createdAt', 'desc'));
-    const unsubscribe = subscribeToQuery(q, (data) => {
+    const handleSync = () => {
+      const data = getReports();
       setReports(data);
-      if (data.length > 0 && !selectedReportId) {
-        setSelectedReportId(data[0].id);
-      }
-    });
-    return () => unsubscribe();
-  }, [selectedReportId]);
+      setSelectedReportId(prev => (!prev && data.length > 0) ? data[0].id : prev);
+    };
+    handleSync();
+    window.addEventListener('roadwatch-reports-updated', handleSync);
+    return () => {
+      window.removeEventListener('roadwatch-reports-updated', handleSync);
+    };
+  }, []);
 
   // Listen to notifications in real-time
   useEffect(() => {
@@ -404,14 +407,14 @@ export function MunicipalOperations() {
   };
 
   const handleVerify = (id: string) => {
+    const reportId = id.startsWith('comp-from-') ? id.replace('comp-from-', '') : `rep-from-${id}`;
     if (isConfirmed) {
       verifyComplaint(id, citizenRating, citizenFeedback || 'Verified by citizen. Excellent smoothing work.');
-      // Sets status to Closed on confirm
-      updateDocument(getDocRef('complaints', id), { status: 'Closed', citizenVerified: true });
-      updateDocument(getDocRef('reports', `rep-from-${id}`), { resolved: true, status: 'Resolved' });
+      updateComplaint(id, { status: 'Closed', citizenVerified: true });
+      updateReportStatus(reportId, { resolved: true, status: 'Resolved' });
       if (followUpImageUrl) {
-        updateDocument(getDocRef('complaints', id), { followUpImageUrl });
-        updateDocument(getDocRef('reports', `rep-from-${id}`), { afterImageUrl: followUpImageUrl });
+        updateComplaint(id, { followUpImageUrl });
+        updateReportStatus(reportId, { afterImageUrl: followUpImageUrl });
       }
       addDocument(getCollectionRef('notifications'), {
         title: 'Repair Verified & Closed',
@@ -428,7 +431,7 @@ export function MunicipalOperations() {
         citizenRejected: true,
         citizenFeedback: citizenFeedback || 'Repair rejected by citizen. Pavement is still uneven.'
       });
-      updateDocument(getDocRef('reports', `rep-from-${id}`), {
+      updateReportStatus(reportId, {
         status: 'Repairing',
         resolved: false,
         citizenVerified: false,
@@ -454,15 +457,11 @@ export function MunicipalOperations() {
     const weights = { 'Critical': 95, 'High': 80, 'Medium': 55, 'Low': 30 };
     const score = weights[newPriority];
     const severity = newPriority === 'Critical' ? 'Critical' : newPriority === 'High' ? 'Active' : newPriority === 'Medium' ? 'Pending' : 'Scheduled';
-    
     updateReportStatus(reportId, { severity, priorityScore: score });
 
     // Sync to complaint if applicable
-    if (reportId.startsWith('rep-from-comp-')) {
-      const complaintId = reportId.replace('rep-from-', '');
-      updateDocument(getDocRef('complaints', complaintId), { priority: newPriority, priorityScore: score });
-    }
-
+    const complaintId = reportId.toLowerCase().startsWith('rep-from-') ? reportId.substring(9) : `comp-from-${reportId}`;
+    updateComplaint(complaintId, { priority: newPriority, priorityScore: score });
     setSuccessMsg(`Incident priority updated to ${newPriority}.`);
     setTimeout(() => setSuccessMsg(null), 3000);
   };
@@ -478,11 +477,8 @@ export function MunicipalOperations() {
     updateReportStatus(reportId, { repairNotes: newNotes });
 
     // Sync to complaint if applicable
-    if (reportId.startsWith('rep-from-comp-')) {
-      const complaintId = reportId.replace('rep-from-', '');
-      updateDocument(getDocRef('complaints', complaintId), { notes: newNotes });
-    }
-
+    const complaintId = reportId.toLowerCase().startsWith('rep-from-') ? reportId.substring(9) : `comp-from-${reportId}`;
+    updateComplaint(complaintId, { notes: newNotes });
     setSuccessMsg("Admin note appended successfully.");
     setTimeout(() => setSuccessMsg(null), 3000);
   };
@@ -503,20 +499,18 @@ export function MunicipalOperations() {
     updateReportStatus(reportId, updates);
 
     // Sync back to corresponding CitizenComplaint
-    if (reportId.startsWith('rep-from-comp-')) {
-      const complaintId = reportId.replace('rep-from-', '');
-      let compStatus: CitizenComplaint['status'] = 'Submitted';
-      if (status === 'Resolved' || status === 'Completed') compStatus = 'Resolved';
-      else if (status === 'Repairing' || status === 'In Progress') compStatus = 'Repair In Progress';
-      else if (status === 'Assigned') compStatus = 'Assigned';
-      else if (status === 'Verified') compStatus = 'Verified';
-      else if (status === 'Detected') compStatus = 'Submitted';
-      else if ((status as any) === 'Closed') compStatus = 'Closed';
+    const complaintId = reportId.toLowerCase().startsWith('rep-from-') ? reportId.substring(9) : `comp-from-${reportId}`;
+    let compStatus: CitizenComplaint['status'] = 'Submitted';
+    if (status === 'Resolved' || status === 'Completed') compStatus = 'Resolved';
+    else if (status === 'Repairing' || status === 'In Progress') compStatus = 'Repair In Progress';
+    else if (status === 'Assigned') compStatus = 'Assigned';
+    else if (status === 'Verified') compStatus = 'Verified';
+    else if (status === 'Detected') compStatus = 'Submitted';
+    else if ((status as any) === 'Closed') compStatus = 'Closed';
 
-      const compUpdates: any = { status: compStatus };
-      if (teamName) compUpdates.assignedTeam = teamName;
-      updateDocument(getDocRef('complaints', complaintId), compUpdates);
-    }
+    const compUpdates: Partial<CitizenComplaint> = { status: compStatus };
+    if (teamName) compUpdates.assignedTeam = teamName;
+    updateComplaint(complaintId, compUpdates);
 
     // Generate notifications
     let notifTitle = '';
@@ -1041,14 +1035,24 @@ export function MunicipalOperations() {
                             </>
                           )}
 
-                          {(report.status === 'Resolved' || report.status === 'Completed' || report.status === 'Closed') && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdminStatusChange(report.id, 'Repairing')}
-                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
-                            >
-                              Reopen
-                            </button>
+                          {(report.status === 'Resolved' || report.status === 'Completed') && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleAdminStatusChange(report.id, 'Repairing')}
+                                className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
+                              >
+                                Reopen
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAdminStatusChange(comp.id, 'Closed')}
+                                className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors border border-slate-900 shadow-sm"
+                              >
+                                Close
+                              </button>
+                            </>
+>>>>>>> 449bb5636fa3da31d0d5d17aa5d8c388a7d5cc2d
                           )}
                         </div>
 
