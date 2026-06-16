@@ -71,15 +71,15 @@ export function PriorityCenter() {
 
       // Generate parameters based on ID or index to look realistic
       const hash = r.title.length + r.location.length + idx;
-      const trafficImpact: PriorityItem['trafficImpact'] = 
+      const trafficImpact: PriorityItem['trafficImpact'] =
         hash % 4 === 0 ? 'Severe' : hash % 4 === 1 ? 'High' : hash % 4 === 2 ? 'Moderate' : 'Low';
-      
+
       const trafficPoints = trafficImpact === 'Severe' ? 25 : trafficImpact === 'High' ? 18 : trafficImpact === 'Moderate' ? 10 : 5;
-      
-      const roadImportance: PriorityItem['roadImportance'] = 
+
+      const roadImportance: PriorityItem['roadImportance'] =
         r.location.toLowerCase().includes('expressway') || r.location.toLowerCase().includes('highway') ? 'Highway' :
-        r.location.toLowerCase().includes('rd') || r.location.toLowerCase().includes('ave') ? 'Arterial' : 'Local';
-      
+          r.location.toLowerCase().includes('rd') || r.location.toLowerCase().includes('ave') ? 'Arterial' : 'Local';
+
       const roadPoints = roadImportance === 'Highway' ? 15 : roadImportance === 'Arterial' ? 10 : 5;
 
       const accidentRisk = Math.min(96, Math.max(12, (severityPoints + trafficPoints + (hash % 15))));
@@ -89,7 +89,7 @@ export function PriorityCenter() {
       // Costs & assignments
       const cost = type === 'flooding' ? 8500 : type === 'pothole' ? 1200 : type === 'obstacle' ? 2400 : 950;
       const deadlineDays = priorityScore > 85 ? '12 Hours' : priorityScore > 70 ? '24 Hours' : priorityScore > 50 ? '3 Days' : '7 Days';
-      
+
       const teams = ['Team Alpha (Resurfacing)', 'Team Delta (Drainage)', 'Team Gamma (Rapid Response)', 'Team Epsilon (Signals)'];
       const team = type === 'flooding' ? teams[1] : type === 'pothole' ? teams[0] : type === 'signal' ? teams[3] : teams[2];
 
@@ -120,7 +120,7 @@ export function PriorityCenter() {
   // Filtering & Sorting
   const filteredItems = priorityItems.filter(item => {
     const matchDistrict = filterDistrict === 'All' || item.district === filterDistrict;
-    
+
     let matchPriority = true;
     if (filterPriority !== 'All') {
       if (filterPriority === 'Critical') matchPriority = item.priorityScore >= 85;
@@ -155,7 +155,7 @@ export function PriorityCenter() {
 
   // Top AI Recommendation
   const topCriticalItem = sortedItems.find(item => item.priorityScore >= 85);
-  const aiRecommendation = topCriticalItem 
+  const aiRecommendation = topCriticalItem
     ? `Deploy ${topCriticalItem.team} to resolve the "${topCriticalItem.title}" at ${topCriticalItem.location} within ${topCriticalItem.deadline}. Resolving this will reduce traffic delays in the ${topCriticalItem.district} sector by approx 42% and decrease safety risk index.`
     : reports.filter(r => !r.resolved).length > 0
       ? `Conduct structural maintenance sweeps along arterial roads. Current high priority sectors are stable, but regular inspections are recommended.`
@@ -191,7 +191,7 @@ export function PriorityCenter() {
           <div className="flex items-center gap-2 text-xs font-bold text-text-secondary">
             <Filter className="w-4 h-4" /> Filters:
           </div>
-          
+
           <select
             value={filterDistrict}
             onChange={(e) => setFilterDistrict(e.target.value)}
@@ -222,25 +222,22 @@ export function PriorityCenter() {
           <div className="flex bg-slate-100 p-0.5 rounded-lg border border-border-subtle">
             <button
               onClick={() => setSortBy('score')}
-              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                sortBy === 'score' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-primary'
-              }`}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${sortBy === 'score' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-primary'
+                }`}
             >
               Priority Score
             </button>
             <button
               onClick={() => setSortBy('cost')}
-              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                sortBy === 'cost' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-primary'
-              }`}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${sortBy === 'cost' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-primary'
+                }`}
             >
               Cost
             </button>
             <button
               onClick={() => setSortBy('risk')}
-              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                sortBy === 'risk' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-primary'
-              }`}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${sortBy === 'risk' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:text-primary'
+                }`}
             >
               Accident Risk
             </button>
@@ -252,7 +249,7 @@ export function PriorityCenter() {
       <div className="space-y-4">
         {sortedItems.length > 0 ? (
           sortedItems.map((item) => (
-            <div 
+            <div
               key={item.id}
               className="bg-white rounded-xl border border-border-subtle shadow-sm hover:shadow-md transition-all duration-200 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center"
             >

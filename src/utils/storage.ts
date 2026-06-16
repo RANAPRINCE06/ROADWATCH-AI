@@ -31,8 +31,11 @@ export interface Report {
   resolved?: boolean;
   description?: string;
   acknowledged?: boolean;
-  status?: 'Detected' | 'Verified' | 'Assigned' | 'Repairing' | 'Resolved';
+  status?: 'Detected' | 'Verified' | 'Queued' | 'Assigned' | 'Repairing' | 'In Progress' | 'Delayed' | 'Awaiting Resolution' | 'Resolved' | 'Completed';
   priorityScore?: number;
+  startedAt?: number;
+  queuedAt?: number;
+  citizenReportsCount?: number;
   estimatedRisk?: string;
   recommendedRepairTime?: string;
   assignedTeam?: string;
@@ -47,12 +50,24 @@ export interface Report {
   resolutionTime?: string;
   repairNotes?: string;
 
+  // Repair ETA and Progress Tracking
+  progress?: number;
+  etaMinutes?: number;
+  estimatedCompletionTime?: number;
+  delayReason?: string;
+  lastCrewUpdate?: string;
+  lastCrewUpdateAt?: number;
+  slaMinutes?: number;
+  delayMinutes?: number;
+  completedAt?: number;
+
   // Citizen Verification System
   citizenVerified?: boolean;
   citizenRating?: number;
   citizenFeedback?: string;
   satisfactionScore?: number;
   resolutionQualityScore?: number;
+  resolvedAt?: number;
 }
 
 export interface AlertItem {
@@ -101,7 +116,7 @@ export function getRepairs(): RepairItem[] {
   return [];
 }
 
-export function addRepairRecord(hazard: Report, status: 'Assigned' | 'Repairing' | 'Resolved') {
+export function addRepairRecord(hazard: Report, status: 'Assigned' | 'Repairing' | 'Resolved' | 'Completed') {
   const repairId = `rep-log-${hazard.id}-${status.toLowerCase()}`;
   const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const record: RepairItem = {
@@ -110,9 +125,9 @@ export function addRepairRecord(hazard: Report, status: 'Assigned' | 'Repairing'
     hazardTitle: hazard.title,
     location: hazard.location,
     assignedTeam: hazard.assignedTeam || 'Team Gamma (Rapid Response)',
-    status,
+    status: status === 'Completed' ? 'Resolved' : status,
     startDate: hazard.startDate || todayStr,
-    actualCompletionDate: status === 'Resolved' ? todayStr : null,
+    actualCompletionDate: (status === 'Resolved' || status === 'Completed') ? todayStr : null,
     timestamp: new Date().toISOString(),
     notes: hazard.repairNotes || ''
   };
@@ -207,6 +222,7 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
   const estimatedRisk = report.estimatedRisk || (severity === 'Critical' ? 'High Accident Risk' : severity === 'Active' ? 'Moderate Damage Risk' : 'Minor Road Decay');
   const recommendedRepairTime = report.recommendedRepairTime || (severity === 'Critical' ? 'Within 24 Hours' : severity === 'Active' ? 'Within 3 Days' : 'Within 7 Days');
   const status = report.status || (((report.source === 'AI Detected' || report.source?.includes('AI')) && !report.source?.includes('Citizen')) ? 'Verified' : 'Detected');
+  const citizenReportsCount = report.citizenReportsCount || (report.source?.includes('Citizen') ? Math.floor(Math.random() * 12) + 3 : 1);
 
   const newReport: Report = {
     ...report,
@@ -216,6 +232,7 @@ export function addReport(report: Omit<Report, 'id' | 'timestamp'> & { id?: stri
     priorityScore,
     estimatedRisk,
     recommendedRepairTime,
+    citizenReportsCount,
     beforeImageUrl: report.beforeImageUrl || report.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
   };
   
@@ -264,14 +281,19 @@ export function resolveReport(id: string): void {
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
+  const start = report.startedAt || (report.timestamp ? new Date(report.timestamp).getTime() : Date.now() - 42 * 60 * 1000);
+  const durationMins = Math.max(1, Math.round((Date.now() - start) / 60000));
+  const resolutionTime = `${durationMins} Minutes`;
+
   const updatedFields = { 
     resolved: true, 
     status: 'Resolved' as const,
+    resolvedAt: Date.now(),
     assignedTeam: report.assignedTeam || 'Team Gamma (Rapid Response)',
     startDate: report.startDate || yesterdayStr,
     estimatedCompletionDate: report.estimatedCompletionDate || todayStr,
     actualCompletionDate: report.actualCompletionDate || todayStr,
-    resolutionTime: report.resolutionTime || '42 Mins',
+    resolutionTime,
     repairDate: report.repairDate || todayStr,
     afterImageUrl: report.afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80',
     repairNotes: report.repairNotes || 'Completed paving and smoothing of asphalt layer. Structural load validation complete.'
@@ -283,6 +305,15 @@ export function resolveReport(id: string): void {
   if (index !== -1) {
     reports[index] = { ...reports[index], ...updatedFields };
     saveReports(reports);
+
+    // Trigger auto-dispatch
+    const { updatedReports, dispatches } = triggerAutoDispatch(reports);
+    if (dispatches.length > 0) {
+      saveReports(updatedReports);
+      dispatches.forEach(d => {
+        addLog('System Dispatch', `Auto-assigned queued hazard to ${d.team}`, 'SUCCESS');
+      });
+    }
   }
   
   // Write repair record
@@ -312,12 +343,12 @@ export function verifyRepair(id: string, rating: number, feedback: string): void
   updateDocument(getDocRef('hazards', id), updatedFields);
 
   // Sync to complaint
-  if (id.startsWith('rep-from-comp-')) {
-    const complaintId = id.replace('rep-from-', '');
+  if (id.toLowerCase().startsWith('rep-from-comp-')) {
+    const complaintId = id.toLowerCase().replace('rep-from-', '');
     const complaints = getComplaints();
-    const complaint = complaints.find(c => c.id === complaintId);
+    const complaint = complaints.find(c => c.id.toLowerCase() === complaintId);
     if (complaint) {
-      updateDocument(getDocRef('complaints', complaintId), {
+      updateDocument(getDocRef('complaints', complaint.id), {
         citizenVerified: true,
         citizenRating: rating,
         citizenFeedback: feedback,
@@ -339,29 +370,133 @@ export function deleteReport(id: string): void {
 }
 
 export function updateReportStatus(id: string, updates: Partial<Report>): void {
-  updateDocument(getDocRef('hazards', id), updates);
-
   const reports = getReports();
   const index = reports.findIndex(r => r.id === id);
-  if (index !== -1) {
-    const merged = { ...reports[index], ...updates };
+  const report = index !== -1 ? reports[index] : undefined;
+
+  if (updates.status === 'Assigned' && updates.assignedTeam) {
+    const activeReps = reports.filter(r => r.id !== id);
+    const teamWorkload = activeReps.filter(r => 
+      r.assignedTeam === updates.assignedTeam && 
+      !r.resolved && 
+      r.status !== 'Resolved' && 
+      r.status !== 'Completed' && 
+      (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+    ).length;
+    
+    if (teamWorkload >= 2) {
+      const teams = ['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'];
+      const workloads = teams.map(t => ({
+        name: t,
+        load: activeReps.filter(r => 
+          r.assignedTeam === t && 
+          !r.resolved && 
+          r.status !== 'Resolved' && 
+          r.status !== 'Completed' && 
+          (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+        ).length
+      })).sort((a, b) => a.load - b.load);
+
+      if (workloads[0].load < 2) {
+        updates.assignedTeam = workloads[0].name;
+      } else {
+        updates.status = 'Queued';
+        updates.queuedAt = Date.now();
+        updates.assignedTeam = undefined;
+        updates.startDate = undefined;
+        updates.estimatedCompletionDate = undefined;
+      }
+    }
+  }
+
+  if (updates.status === 'In Progress' && report && report.status !== 'In Progress') {
+    updates.startedAt = Date.now();
+    updates.progress = updates.progress !== undefined ? updates.progress : 0;
+    const severity = updates.severity || report.severity || 'Active';
+    updates.slaMinutes = severity === 'Critical' ? 2 : severity === 'Active' ? 5 : 10;
+    updates.etaMinutes = updates.etaMinutes || (severity === 'Critical' ? 12 : severity === 'Active' ? 25 : 45);
+    updates.estimatedCompletionTime = Date.now() + updates.etaMinutes * 60000;
+    updates.lastCrewUpdate = 'Crew deployed. Resurfacing and repair work initiated.';
+    updates.lastCrewUpdateAt = Date.now();
+  }
+
+  if (updates.status === 'Delayed' && report) {
+    updates.lastCrewUpdate = `Repair delayed. Reason: ${updates.delayReason || 'Equipment/Crew reallocation'}`;
+    updates.lastCrewUpdateAt = Date.now();
+  }
+
+  if (updates.status === 'Awaiting Resolution' && report) {
+    updates.lastCrewUpdate = 'Repair complete. Awaiting final quality assurance approval.';
+    updates.lastCrewUpdateAt = Date.now();
+  }
+
+  if (updates.progress !== undefined && report) {
+    updates.lastCrewUpdateAt = Date.now();
+    if (updates.progress === 100) {
+      updates.status = 'Awaiting Resolution';
+      updates.lastCrewUpdate = 'Repair operations reached 100%. Awaiting inspection.';
+    } else {
+      updates.lastCrewUpdate = `Repair progress updated to ${updates.progress}%.`;
+    }
+  }
+
+  if (updates.etaMinutes !== undefined && report) {
+    const prevEstTime = report.estimatedCompletionTime || (report.startedAt ? report.startedAt + (report.etaMinutes || 0) * 60000 : 0);
+    const newEstTime = Date.now() + updates.etaMinutes * 60000;
+    updates.estimatedCompletionTime = newEstTime;
+    
+    if (prevEstTime > 0 && newEstTime > prevEstTime + 10000) {
+      const diffMins = Math.round((newEstTime - prevEstTime) / 60000);
+      addLog('Maintenance Dispatch', `ETA for "${report.title}" increased by ${diffMins} minutes. Reason: ${updates.delayReason || 'Crew update'}`, 'WARN');
+    }
+  }
+
+  if ((updates.status === 'Resolved' || updates.status === 'Completed') && report) {
+    const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    updates.resolved = true;
+    updates.resolvedAt = Date.now();
+    updates.completedAt = Date.now();
+    updates.actualCompletionDate = report.actualCompletionDate || todayStr;
+    updates.repairDate = report.repairDate || todayStr;
+    
+    const start = updates.startedAt || report.startedAt || (report.timestamp ? new Date(report.timestamp).getTime() : Date.now() - 42 * 60 * 1000);
+    const durationMins = Math.max(1, Math.round((Date.now() - start) / 60000));
+    updates.resolutionTime = `${durationMins} Minutes`;
+
+    updates.afterImageUrl = report.afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80';
+    updates.repairNotes = report.repairNotes || 'Completed paving and smoothing of asphalt layer. Structural load validation complete.';
+  }
+
+  updateDocument(getDocRef('hazards', id), updates);
+
+  if (index !== -1 && report) {
+    const merged = { ...report, ...updates };
     reports[index] = merged;
     saveReports(reports); // Force local storage update and UI re-render
 
-    if (updates.status === 'Assigned' || updates.status === 'Repairing') {
-      addRepairRecord(merged, updates.status);
+    if (updates.status === 'Assigned' || updates.status === 'Repairing' || updates.status === 'In Progress') {
+      addRepairRecord(merged, (updates.status === 'In Progress' || updates.status === 'Repairing') ? 'Repairing' : updates.status as any);
     }
-    if (updates.status === 'Resolved') {
+    if (updates.status === 'Resolved' || updates.status === 'Completed') {
       resolveAlertForHazard(id);
+    }
+
+    // Trigger auto-dispatch
+    const { updatedReports, dispatches } = triggerAutoDispatch(reports);
+    if (dispatches.length > 0) {
+      saveReports(updatedReports);
+      dispatches.forEach(d => {
+        addLog('System Dispatch', `Auto-assigned queued hazard to ${d.team}`, 'SUCCESS');
+      });
     }
   }
 
   // Sync status changes back to CitizenComplaint
-  if (id.startsWith('rep-from-comp-') && updates.status) {
-    const complaintId = id.replace('rep-from-', '');
+  if (id.toLowerCase().startsWith('rep-from-comp-') && updates.status) {
+    const complaintId = id.toLowerCase().replace('rep-from-', '');
     let compStatus: CitizenComplaint['status'] = 'Submitted';
-    if (updates.status === 'Resolved') compStatus = 'Resolved';
-    else if (updates.status === 'Repairing') compStatus = 'Repair In Progress';
+    if (updates.status === 'Resolved' || updates.status === 'Completed') compStatus = 'Resolved';
+    else if (updates.status === 'Repairing' || updates.status === 'In Progress') compStatus = 'Repair In Progress';
     else if (updates.status === 'Assigned') compStatus = 'Assigned';
     else if (updates.status === 'Verified') compStatus = 'Verified';
     else if (updates.status === 'Detected') compStatus = 'Submitted';
@@ -586,7 +721,7 @@ export function saveComplaints(complaints: CitizenComplaint[]): void {
 }
 
 export function addComplaint(complaint: Omit<CitizenComplaint, 'id' | 'timestamp' | 'votes' | 'status'> & { id?: string; timestamp?: string }): CitizenComplaint {
-  const id = complaint.id || `COMP-${Math.floor(100000 + Math.random() * 900000)}`;
+  const id = complaint.id || `comp-${Math.floor(100000 + Math.random() * 900000)}`;
   const timestamp = complaint.timestamp || new Date().toISOString();
   
   const newComplaint: CitizenComplaint = {
@@ -829,6 +964,105 @@ export function triggerDemoModeSimulation(): void {
   } catch (e) {
     console.error(e);
   }
+}
+
+export function sortQueuedHazards(hazards: Report[]): Report[] {
+  return [...hazards].sort((a, b) => {
+    // 1. Severity (Critical = 4, Active/High = 3, Pending/Medium = 2, Scheduled/Low = 1)
+    const getSeverityWeight = (sev?: string) => {
+      switch (sev) {
+        case 'Critical': return 4;
+        case 'Active': return 3;
+        case 'Pending': return 2;
+        case 'Scheduled': return 1;
+        default: return 1;
+      }
+    };
+    const sevA = getSeverityWeight(a.severity);
+    const sevB = getSeverityWeight(b.severity);
+    if (sevB !== sevA) return sevB - sevA;
+
+    // 2. AI Risk Score
+    const scoreA = a.priorityScore || 0;
+    const scoreB = b.priorityScore || 0;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+
+    // 3. Citizen reports count
+    const reportsA = a.citizenReportsCount || 0;
+    const reportsB = b.citizenReportsCount || 0;
+    if (reportsB !== reportsA) return reportsB - reportsA;
+
+    // 4. Waiting time (older queued first -> smaller queuedAt)
+    const timeA = a.queuedAt || 0;
+    const timeB = b.queuedAt || 0;
+    return timeA - timeB;
+  });
+}
+
+export function triggerAutoDispatch(reports: Report[]): { updatedReports: Report[]; dispatches: { reportId: string; team: string }[] } {
+  const teams = ['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'];
+  const updatedReports = [...reports];
+  const dispatches: { reportId: string; team: string }[] = [];
+
+  let queued = updatedReports.filter(r => r.status === 'Queued');
+  if (queued.length === 0) return { updatedReports, dispatches };
+
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  while (queued.length > 0 && attempts < maxAttempts) {
+    attempts++;
+    const workloads: Record<string, number> = {
+      'Team Alpha': 0,
+      'Team Bravo': 0,
+      'Team Charlie': 0,
+      'Team Delta': 0
+    };
+
+    updatedReports.forEach(r => {
+      if (r.assignedTeam && !r.resolved && r.status !== 'Resolved' && r.status !== 'Completed' &&
+          (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')) {
+        if (workloads[r.assignedTeam] !== undefined) {
+          workloads[r.assignedTeam]++;
+        }
+      }
+    });
+
+    const availableTeams = teams.filter(t => workloads[t] < 2).sort((a, b) => workloads[a] - workloads[b]);
+    if (availableTeams.length === 0) break;
+
+    const sortedQueued = sortQueuedHazards(queued);
+    const topHazard = sortedQueued[0];
+    const assignedTeam = availableTeams[0];
+
+    const hzIdx = updatedReports.findIndex(r => r.id === topHazard.id);
+    if (hzIdx > -1) {
+      const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      updatedReports[hzIdx] = {
+        ...updatedReports[hzIdx],
+        status: 'Assigned',
+        assignedTeam,
+        startDate: todayStr,
+        estimatedCompletionDate: todayStr,
+        queuedAt: undefined
+      };
+      
+      updateDocument(getDocRef('hazards', topHazard.id), {
+        status: 'Assigned',
+        assignedTeam,
+        startDate: todayStr,
+        estimatedCompletionDate: todayStr,
+        queuedAt: null as any
+      });
+
+      addRepairRecord(updatedReports[hzIdx], 'Assigned');
+      dispatches.push({ reportId: topHazard.id, team: assignedTeam });
+    }
+
+    queued = updatedReports.filter(r => r.status === 'Queued');
+  }
+
+  return { updatedReports, dispatches };
 }
 
 // Subscribe to Firestore updates and update LocalStorage to keep the entire app synced in real-time

@@ -1,13 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Bell, Bot, MapPin, Menu, Play, AlertTriangle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getReports, Report, getAlerts, AlertItem } from '../utils/storage';
+import { getReports, Report } from '../utils/storage';
 
 export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen: boolean; onToggle: () => void; onToggleChat: () => void; isChatOpen: boolean }) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
-  const [alerts, setAlerts] = useState<AlertItem[]>(() => getAlerts());
+  
+  const getSortedCriticalHazards = () => {
+    return getReports()
+      .filter(r => r.severity === 'Critical' && !r.resolved && r.status !== 'Resolved')
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  };
+
+  const [criticalHazards, setCriticalHazards] = useState<Report[]>(() => getSortedCriticalHazards());
   const [showNotifications, setShowNotifications] = useState(false);
+  const [hasNewAlert, setHasNewAlert] = useState(false);
+  const [prevCount, setPrevCount] = useState(() => criticalHazards.length);
   const [profile, setProfile] = useState(() => {
     try {
       const saved = localStorage.getItem('roadwatch_user_profile');
@@ -20,12 +29,39 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
     };
   });
 
+  const formatTimeAgo = (timestampStr: string) => {
+    if (!timestampStr) return 'Just now';
+    const date = new Date(timestampStr);
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString();
+  };
+
+  const handleToggleNotifications = () => {
+    const nextShow = !showNotifications;
+    setShowNotifications(nextShow);
+    if (nextShow) {
+      setHasNewAlert(false);
+    }
+  };
+
   useEffect(() => {
-    const updateAlertsList = () => {
-      setAlerts(getAlerts().filter(a => a.status === 'Active' || a.status === 'Acknowledged'));
+    const updateHazardsList = () => {
+      const hazards = getSortedCriticalHazards();
+      setCriticalHazards(hazards);
+      setPrevCount(prev => {
+        if (hazards.length > prev) {
+          setHasNewAlert(true);
+        }
+        return hazards.length;
+      });
     };
-    updateAlertsList();
-    window.addEventListener('roadwatch-alerts-updated', updateAlertsList);
+    updateHazardsList();
+    window.addEventListener('roadwatch-reports-updated', updateHazardsList);
     
     const handleUserUpdate = () => {
       try {
@@ -36,7 +72,7 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
     window.addEventListener('roadwatch-user-updated', handleUserUpdate);
 
     return () => {
-      window.removeEventListener('roadwatch-alerts-updated', updateAlertsList);
+      window.removeEventListener('roadwatch-reports-updated', updateHazardsList);
       window.removeEventListener('roadwatch-user-updated', handleUserUpdate);
     };
   }, []);
@@ -117,17 +153,22 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
           {/* Notifications Bell with Dropdown */}
           <div className="relative">
             <button 
-              onClick={() => setShowNotifications(!showNotifications)}
+              onClick={handleToggleNotifications}
               className={`relative text-on-surface-variant hover:text-primary transition-all flex items-center justify-center p-1.5 rounded-full hover:bg-surface-container-low cursor-pointer ${
                 showNotifications ? 'bg-surface-container-low text-primary' : ''
               }`}
               title="Critical Active Alerts"
             >
               <Bell className="w-5 h-5" />
-              {alerts.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white">
-                  {alerts.length}
-                </span>
+              {criticalHazards.length > 0 && (
+                <>
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white z-10">
+                    {criticalHazards.length}
+                  </span>
+                  {hasNewAlert && (
+                    <span className="absolute -top-0.5 -right-0.5 bg-red-500 w-4 h-4 rounded-full border border-white animate-ping"></span>
+                  )}
+                </>
               )}
             </button>
 
@@ -135,17 +176,17 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-border-subtle z-50 p-4 animate-fade-in-up">
                 <div className="flex justify-between items-center border-b border-border-subtle pb-2 mb-2.5">
                   <h4 className="text-xs font-black text-primary tracking-wide uppercase flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 animate-pulse" /> Critical Alerts ({alerts.length})
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 animate-pulse" /> Critical Alerts ({criticalHazards.length})
                   </h4>
                   <button onClick={() => setShowNotifications(false)} className="text-[10px] text-text-secondary hover:text-primary font-bold">✕</button>
                 </div>
                 <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar">
-                  {alerts.length === 0 ? (
+                  {criticalHazards.length === 0 ? (
                     <div className="text-[10px] text-text-secondary text-center py-6 font-semibold">
-                      No active critical alerts
+                      No Critical Alerts
                     </div>
                   ) : (
-                    alerts.map((a) => (
+                    criticalHazards.map((a) => (
                       <div 
                         key={a.id}
                         onClick={() => {
@@ -159,8 +200,11 @@ export function TopBar({ isOpen, onToggle, onToggleChat, isChatOpen }: { isOpen:
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-[11px] font-bold text-primary group-hover:text-red-700 transition-colors truncate leading-tight">{a.title}</p>
-                          <p className="text-[9px] text-text-secondary truncate mt-0.5">{a.location}</p>
-                          <p className="text-[8px] text-text-secondary/60 mt-0.5 italic">{a.status}</p>
+                          <p className="text-[9px] text-text-secondary truncate mt-0.5">📍 {a.location}</p>
+                          <div className="flex justify-between items-center mt-1">
+                            <span className="text-[8px] text-text-secondary/60 italic">Reported: {formatTimeAgo(a.timestamp)}</span>
+                            <span className="text-[8px] font-black text-red-600 bg-red-50 px-1.5 py-0.5 rounded uppercase tracking-wider">{a.status}</span>
+                          </div>
                         </div>
                       </div>
                     ))

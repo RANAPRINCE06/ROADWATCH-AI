@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getReports, resolveReport as storageResolveReport, addReport as storageAddReport, Report } from '../utils/storage';
+import { getReports, resolveReport as storageResolveReport, addReport as storageAddReport, addComplaint, Report } from '../utils/storage';
 import { 
   Layers, 
   Eye, 
@@ -489,18 +489,17 @@ export function LiveHeatmap() {
       const lat = 1.27 + Math.random() * 0.05;
       const lng = 103.82 + Math.random() * 0.06;
 
-      storageAddReport({
-        title: template.title,
-        location: template.location,
-        severity,
-        icon,
-        source: 'AI Edge Node',
-        x: Math.floor(Math.random() * 60) + 20,
-        y: Math.floor(Math.random() * 60) + 20,
+      addComplaint({
+        title: `${template.title} [DEMO DATA]`,
+        description: `Autonomous citizen report: ${template.title} at ${template.location}. [DEMO DATA]`,
+        locationName: template.location,
+        priority: severity === 'Critical' ? ('Critical' as const) : severity === 'Active' ? ('High' as const) : ('Medium' as const),
+        hazardType: template.type === 'pothole' ? 'Pothole' : template.type === 'flooding' ? 'Waterlogging' : 'Road Blockage',
+        imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
         lat,
         lng,
-        imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-        description: `Autonomous detection alert: ${template.title} at ${template.location}.`
+        x: Math.floor(Math.random() * 60) + 20,
+        y: Math.floor(Math.random() * 60) + 20
       });
 
       setNewIncidentFlash(true);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
+import { Link } from 'react-router-dom';
 declare const google: any;
 import { 
   TrendingUp, 
@@ -20,20 +21,60 @@ import {
   Clock,
   ArrowRight,
   MapPin,
-  Camera,
   Users,
   Star,
-  MessageSquare
+  MessageSquare,
+  Trash2,
+  ShieldAlert,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { 
   getReports, 
   getRepairs,
   resolveReport as storageResolveReport, 
   addReport as storageAddReport, 
+  addComplaint,
   updateReportStatus, 
   verifyRepair,
+  getSettings,
+  deleteReport,
+  sortQueuedHazards,
   Report 
 } from '../utils/storage';
+import { reportsApi } from '../services/api';
+import { useIncidentProgress, getDisplayProgress, isDelayed } from '../hooks/useIncidentProgress';
+
+const calculateDynamicPriorityScore = (report: Report): number => {
+  // 1. Severity points (Max 30)
+  let severityPoints = 10;
+  if (report.severity === 'Critical') severityPoints = 30;
+  else if (report.severity === 'Active') severityPoints = 22;
+  else if (report.severity === 'Pending') severityPoints = 15;
+
+  // 2. Traffic Impact points (Max 30)
+  const hash = (report.id || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const isHighTrafficLocation = report.location.toLowerCase().includes('expressway') || 
+                               report.location.toLowerCase().includes('highway') || 
+                               report.location.toLowerCase().includes('rd') || 
+                               report.location.toLowerCase().includes('ave');
+  const trafficImpact = isHighTrafficLocation
+    ? (hash % 2 === 0 ? 'Severe' : 'High')
+    : (hash % 2 === 0 ? 'Moderate' : 'Low');
+  
+  const trafficPoints = trafficImpact === 'Severe' ? 30 : trafficImpact === 'High' ? 22 : trafficImpact === 'Moderate' ? 15 : 8;
+
+  // 3. Number of Citizen Reports points (Max 20)
+  const reportsCount = report.citizenReportsCount || 1;
+  const reportsPoints = Math.min(20, reportsCount + 2);
+
+  // 4. AI Risk Score points (Max 20)
+  const aiRiskScore = report.priorityScore || (report.severity === 'Critical' ? 92 : report.severity === 'Active' ? 76 : 50);
+  const aiPoints = Math.min(20, Math.round(aiRiskScore * 0.2));
+
+  return Math.min(100, severityPoints + trafficPoints + reportsPoints + aiPoints);
+};
 
 const HAZARD_TEMPLATES = [
   { title: 'Severe Pothole', location: 'Orchard Rd Lane 2', severity: 'Critical', icon: 'alert', source: 'Citizen Portal', imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80' },
@@ -42,57 +83,7 @@ const HAZARD_TEMPLATES = [
   { title: 'Debris on Roadway', location: 'Nicoll Highway West', severity: 'Active', icon: 'hardhat', source: 'Citizen Portal', imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80' }
 ] as const;
 
-// Interactive Image Comparison Slider Component
-function ImageComparisonSlider({ beforeUrl, afterUrl }: { beforeUrl: string; afterUrl: string }) {
-  const [sliderPos, setSliderPos] = useState(50);
-  
-  return (
-    <div className="relative w-full h-48 rounded-lg overflow-hidden border border-border-subtle select-none">
-      {/* Before Image */}
-      <img src={beforeUrl} alt="Before" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
 
-      {/* After Image Overlay */}
-      <div 
-        className="absolute inset-0 overflow-hidden pointer-events-none" 
-        style={{ width: `${sliderPos}%` }}
-      >
-        <img 
-          src={afterUrl} 
-          alt="After" 
-          className="absolute inset-0 w-full h-full object-cover max-w-none" 
-          style={{ width: '100%', height: '100%' }} 
-        />
-      </div>
-
-      {/* Divider Line */}
-      <div 
-        className="absolute top-0 bottom-0 w-1 bg-white shadow pointer-events-none" 
-        style={{ left: `${sliderPos}%` }}
-      />
-      
-      {/* Handle */}
-      <div 
-        className="absolute w-6 h-6 rounded-full bg-white border border-slate-300 shadow flex items-center justify-center top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none text-[10px] font-bold text-primary"
-        style={{ left: `${sliderPos}%` }}
-      >
-        ↔
-      </div>
-
-      {/* Invisible Slider Input for Native Dragging */}
-      <input 
-        type="range" 
-        min="0" 
-        max="100" 
-        value={sliderPos} 
-        onChange={(e) => setSliderPos(Number(e.target.value))}
-        className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-30" 
-      />
-
-      <span className="absolute bottom-1.5 left-2.5 bg-red-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow z-10 pointer-events-none">BEFORE</span>
-      <span className="absolute bottom-1.5 right-2.5 bg-green-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow z-10 pointer-events-none">AFTER</span>
-    </div>
-  );
-}
 
 // React Portal wrapper to render React components natively inside Google Maps overlays
 interface PortalOverlayProps {
@@ -145,12 +136,193 @@ const GoogleMapPortalOverlay: React.FC<PortalOverlayProps> = ({ map, position, c
 
 export function Dashboard() {
   const [reports, setReports] = useState<Report[]>([]);
+  const [updatingReport, setUpdatingReport] = useState<Report | null>(null);
+  const [updateProgressVal, setUpdateProgressVal] = useState<number>(0);
+  const [updateEtaVal, setUpdateEtaVal] = useState<number>(0);
+  const [updateStatusVal, setUpdateStatusVal] = useState<'In Progress' | 'Delayed' | 'Awaiting Resolution'>('In Progress');
+  const [updateDelayReason, setUpdateDelayReason] = useState<string>('');
+  const [updateNotes, setUpdateNotes] = useState<string>('');
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [hoveredReportId, setHoveredReportId] = useState<string | null>(null);
   const [aiAccuracy, setAiAccuracy] = useState<number>(98.5);
   const [meanResolveTime, setMeanResolveTime] = useState<number>(42);
   const [now, setNow] = useState<Date>(new Date());
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [settings, setSettings] = useState(() => getSettings());
+  const [feedSeverityFilter, setFeedSeverityFilter] = useState<'All' | 'Critical' | 'High' | 'Medium' | 'Low'>('All');
+  const [showClearConfirmation, setShowClearConfirmation] = useState(false);
+  const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({});
+  const [simTemplate, setSimTemplate] = useState<any>(null);
+
+  const DEMO_TEMPLATES = [
+    {
+      title: 'Severe Pothole [DEMO DATA]',
+      location: 'Stamford Road Crossing',
+      severity: 'Critical',
+      icon: 'alert',
+      description: 'Deep pothole forming in the middle lane, depth approx 12cm. High risk of tire damage. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
+      lat: 1.2975,
+      lng: 103.8525,
+      x: 45,
+      y: 40,
+      priorityScore: 94,
+      estimatedRisk: 'High Accident Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 24 Hours'
+    },
+    {
+      title: 'Debris on Roadway [DEMO DATA]',
+      location: 'Nicoll Highway Westbound',
+      severity: 'Active',
+      icon: 'hardhat',
+      description: 'Large construction debris and metal framing blocks the curbside lane. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3025,
+      lng: 103.8685,
+      x: 45,
+      y: 40,
+      priorityScore: 78,
+      estimatedRisk: 'Moderate Damage Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 3 Days'
+    },
+    {
+      title: 'Broken Traffic Signal [DEMO DATA]',
+      location: 'Bras Basah Road Junction',
+      severity: 'Critical',
+      icon: 'alert',
+      description: 'Intersection traffic lights are completely dark. Traffic flow is congested and dangerous. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1510935579761-125207a902f4?auto=format&fit=crop&w=400&q=80',
+      lat: 1.2985,
+      lng: 103.8510,
+      x: 62,
+      y: 68,
+      priorityScore: 92,
+      estimatedRisk: 'High Accident Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 24 Hours'
+    },
+    {
+      title: 'Flooded Street [DEMO DATA]',
+      location: 'Dunearn Road Eastbound',
+      severity: 'Critical',
+      icon: 'droplets',
+      description: 'Heavy water accumulation on the roadway, water depth exceeds 15cm. Vehicles turning back. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3280,
+      lng: 103.8110,
+      x: 45,
+      y: 35,
+      priorityScore: 95,
+      estimatedRisk: 'High Accident Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 24 Hours'
+    },
+    {
+      title: 'Fallen Tree Blocking Lane [DEMO DATA]',
+      location: 'Orchard Link Southbound',
+      severity: 'Active',
+      icon: 'hardhat',
+      description: 'Large tree branch snapped and blocking the left lane. Cars forcing a detour. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3048,
+      lng: 103.8318,
+      x: 35,
+      y: 50,
+      priorityScore: 75,
+      estimatedRisk: 'Moderate Damage Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 3 Days'
+    },
+    {
+      title: 'Damaged Road Sign [DEMO DATA]',
+      location: 'Jalan Besar Section 2',
+      severity: 'Pending',
+      icon: 'alert',
+      description: 'Speed limit sign has been bent to the ground, invisible to oncoming traffic. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3050,
+      lng: 103.8500,
+      x: 50,
+      y: 50,
+      priorityScore: 48,
+      estimatedRisk: 'Minor Road Decay [DEMO DATA]',
+      recommendedRepairTime: 'Within 7 Days'
+    }
+  ];
+
+  // ── Automated progress engine (runs every 60s) ──────────────────────────
+  useIncidentProgress(60_000);
+
+  const getElapsedDuration = (startedAt?: number) => {
+    if (!startedAt) return '0 Minutes';
+    const elapsedMs = now.getTime() - startedAt;
+    const elapsedMins = Math.max(0, Math.floor(elapsedMs / 60000));
+    return `${elapsedMins} Minutes`;
+  };
+
+  const getStatusBadgeClass = (status?: string) => {
+    switch (status) {
+      case 'Detected':
+        return 'bg-slate-100 text-slate-700 border-slate-200/80';
+      case 'Verified':
+        return 'bg-blue-100 text-blue-700 border-blue-200/80';
+      case 'Queued':
+        return 'bg-amber-100 text-amber-700 border-amber-200/80';
+      case 'Assigned':
+        return 'bg-purple-100 text-purple-700 border-purple-200/80';
+      case 'In Progress':
+      case 'Repairing':
+        return 'bg-orange-100 text-orange-700 border-orange-200/80';
+      case 'Delayed':
+        return 'bg-rose-100 text-rose-700 border-rose-200/80';
+      case 'Awaiting Resolution':
+        return 'bg-cyan-100 text-cyan-700 border-cyan-200/80';
+      case 'Resolved':
+        return 'bg-green-100 text-green-700 border-green-200/80';
+      default:
+        return 'bg-slate-100 text-slate-700 border-slate-200/80';
+    }
+  };
+
+  const getTeamDispatchesCount = (teamName: string) => {
+    return reports.filter(r => 
+      r.assignedTeam === teamName && 
+      !r.resolved && 
+      r.status !== 'Resolved' && 
+      r.status !== 'Completed' && 
+      (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+    ).length;
+  };
+
+  const getTeamAvailability = (teamName: string) => {
+    const count = getTeamDispatchesCount(teamName);
+    return count === 0 ? 'Available' : `Busy (${count} active)`;
+  };
+
+  const getAiRecommendation = (report: Report) => {
+    const teams = ['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'];
+    const activeDispatches = {
+      'Team Alpha': getTeamDispatchesCount('Team Alpha'),
+      'Team Bravo': getTeamDispatchesCount('Team Bravo'),
+      'Team Charlie': getTeamDispatchesCount('Team Charlie'),
+      'Team Delta': getTeamDispatchesCount('Team Delta'),
+    };
+
+    const sortedTeams = [...teams].sort(
+      (a, b) => activeDispatches[a as keyof typeof activeDispatches] - activeDispatches[b as keyof typeof activeDispatches]
+    );
+
+    return sortedTeams[0];
+  };
+
+  const formatTimeAgo = (timestampStr: string) => {
+    if (!timestampStr) return 'Just now';
+    const date = new Date(timestampStr);
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString();
+  };
   
   // Feedback System Inputs
   const [feedbackText, setFeedbackText] = useState<string>('');
@@ -427,12 +599,17 @@ export function Dashboard() {
       setMapLayer('satellite');
     };
 
+    const handleSettingsUpdate = () => {
+      setSettings(getSettings());
+    };
+
     window.addEventListener('roadwatch-reports-updated', handleSync);
     window.addEventListener('roadwatch-repairs-updated', handleSync);
     window.addEventListener('roadwatch-start-simulation', handleStartSim);
     window.addEventListener('roadwatch-search', handleSearch);
     window.addEventListener('roadwatch-select-report', handleSelectReport);
     window.addEventListener('roadwatch-reset-map', handleResetMap);
+    window.addEventListener('roadwatch-settings-updated', handleSettingsUpdate);
     
     return () => {
       window.removeEventListener('roadwatch-reports-updated', handleSync);
@@ -500,10 +677,10 @@ export function Dashboard() {
   // Authority Action Panel operations
   const handleVerify = (id: string) => {
     updateReportStatus(id, { status: 'Verified' });
-    showToast('Verified hazard details. AI scan complete.', 'info');
+    showToast('Hazard Verified Successfully', 'success');
   };
 
-  const handleAssign = (id: string, team = 'Team Gamma (Rapid Response)') => {
+  const handleAssign = (id: string, team: string) => {
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     updateReportStatus(id, { 
       status: 'Assigned',
@@ -511,17 +688,39 @@ export function Dashboard() {
       startDate: todayStr,
       estimatedCompletionDate: todayStr
     });
-    showToast(`Assigned ${team} for dispatch.`, 'info');
+    showToast(`Assigned ${team} for dispatch.`, 'success');
   };
 
   const handleStartRepair = (id: string) => {
-    updateReportStatus(id, { status: 'Repairing' });
-    showToast('Crew deployed on site. Repairs active.', 'info');
+    updateReportStatus(id, { status: 'In Progress' });
+    showToast('Crew deployed on site. Repairs active.', 'success');
   };
 
   const handleResolve = (id: string) => {
+    const report = reports.find(r => r.id === id);
+    if (!report) return;
     storageResolveReport(id);
-    showToast('Repaving verified. Hazard marked Resolved.', 'success');
+    const start = report.startedAt || (report.timestamp ? new Date(report.timestamp).getTime() : Date.now() - 42 * 60 * 1000);
+    const durationMins = Math.max(1, Math.round((Date.now() - start) / 60000));
+    const durationStr = `${durationMins} Minutes`;
+
+    showToast(`✅ Hazard Resolved\n${report.title}\nResolved by ${report.assignedTeam || 'Team Gamma'}\nDuration: ${durationStr}`, 'success');
+  };
+
+  const handleClearAllResolved = async () => {
+    try {
+      await reportsApi.clearCompleted();
+    } catch (err) {
+      console.warn("Backend clear completed reports failed, falling back to local deletion:", err);
+    }
+    
+    const resolved = reports.filter(r => r.resolved || r.status === 'Resolved');
+    resolved.forEach(r => {
+      deleteReport(r.id);
+    });
+
+    showToast('All resolved hazards have been cleared.', 'success');
+    setShowClearConfirmation(false);
   };
 
   const handleCitizenVerify = (id: string, rating: number, feedback: string) => {
@@ -532,29 +731,23 @@ export function Dashboard() {
 
   // Generate isolated citizen report
   const simulateNewHazard = () => {
-    const template = HAZARD_TEMPLATES[Math.floor(Math.random() * HAZARD_TEMPLATES.length)];
-    const x = Math.floor(Math.random() * 50) + 25;
-    const y = Math.floor(Math.random() * 50) + 25;
+    const template = DEMO_TEMPLATES[Math.floor(Math.random() * DEMO_TEMPLATES.length)];
     
-    const newReport = storageAddReport({
+    const newComp = addComplaint({
       title: template.title,
-      location: template.location,
-      severity: template.severity,
-      icon: template.icon,
-      source: template.source,
-      x,
-      y,
-      lat: 1.295 + (Math.random() - 0.5) * 0.02,
-      lng: 103.85 + (Math.random() - 0.5) * 0.02,
+      locationName: template.location,
+      priority: template.severity === 'Critical' ? 'Critical' : template.severity === 'Active' ? 'High' : 'Medium',
+      hazardType: template.icon === 'alert' ? 'Pothole' : template.icon === 'droplets' ? 'Waterlogging' : 'Road Blockage',
+      description: template.description,
       imageUrl: template.imageUrl,
-      description: 'Reported via Citizen Portal mobile app. Asphalt crumbling.',
-      status: 'Detected',
-      priorityScore: 0,
-      estimatedRisk: 'Pending Safety Audit',
-      recommendedRepairTime: 'Assess Pending'
+      lat: template.lat,
+      lng: template.lng,
+      x: template.x,
+      y: template.y
     });
 
-    setSelectedReportId(newReport.id);
+    const reportId = `rep-from-${newComp.id}`;
+    setSelectedReportId(reportId);
     showToast(`🚨 New Complaint: ${template.title} at ${template.location}`, 'alert');
   };
 
@@ -565,40 +758,38 @@ export function Dashboard() {
     setSimStep(-1);
     setSimReportId(null);
     setSimLogs([]);
+    setSimTemplate(null);
     setReports(loadReportsFromStorage());
   };
 
   // 9-Stage playthrough playbook
-  const runDemoStep = (stepIndex: number, currentReportId: string | null) => {
+  const runDemoStep = (stepIndex: number, currentReportId: string | null, activeTemplate?: any) => {
     let nextReportId = currentReportId;
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const currentTemplate = activeTemplate || simTemplate;
 
     switch (stepIndex) {
       case 0: { // 1. Citizen Uploads Image
-        const newRep = storageAddReport({
-          title: 'Critical Asphalt Sinkhole',
-          location: 'Stamford Road Crossing',
-          severity: 'Critical',
-          icon: 'alert',
-          source: 'Citizen Portal',
-          x: 45,
-          y: 40,
-          lat: 1.2975,
-          lng: 103.8525,
-          imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-          description: 'Large surface crack widening, depth 18cm. Poses collision risk.',
-          status: 'Detected',
-          priorityScore: 0,
-          estimatedRisk: 'Unassessed',
-          recommendedRepairTime: 'Pending scan'
+        const t = currentTemplate || DEMO_TEMPLATES[0];
+        const newComp = addComplaint({
+          title: t.title,
+          locationName: t.location,
+          priority: t.severity === 'Critical' ? 'Critical' : t.severity === 'Active' ? 'High' : 'Medium',
+          hazardType: t.icon === 'alert' ? 'Pothole' : t.icon === 'droplets' ? 'Waterlogging' : 'Road Blockage',
+          description: t.description,
+          imageUrl: t.imageUrl,
+          lat: t.lat,
+          lng: t.lng,
+          x: t.x,
+          y: t.y
         });
-        nextReportId = newRep.id;
-        setSelectedReportId(newRep.id);
-        setSimReportId(newRep.id);
-        setMapPan({ x: -120, y: 40 });
+        nextReportId = `rep-from-${newComp.id}`;
+        setSelectedReportId(nextReportId);
+        setSimReportId(nextReportId);
+        setMapPan({ x: (50 - t.x) * 6, y: (50 - t.y) * 6 });
         setZoomLevel(1.5);
-        setSimLogs(prev => [...prev, '✓ Step 1: Citizen uploaded damage photo. Registered as Detected.']);
-        showToast('Step 1: Citizen uploaded Stamford Rd pothole photo.', 'alert');
+        setSimLogs(prev => [...prev, `✓ Step 1: Citizen uploaded visual evidence for "${t.title}".`]);
+        showToast(`Step 1: Citizen reported ${t.title}.`, 'alert');
         break;
       }
       case 1: { // 2. AI Detects Hazard
@@ -616,15 +807,15 @@ export function Dashboard() {
         break;
       }
       case 3: { // 4. Priority Score Generated
-        if (currentReportId) {
+        if (currentReportId && currentTemplate) {
           updateReportStatus(currentReportId, {
             status: 'Verified',
-            priorityScore: 94,
-            estimatedRisk: 'High Accident Risk',
-            recommendedRepairTime: 'Within 24 Hours'
+            priorityScore: currentTemplate.priorityScore,
+            estimatedRisk: currentTemplate.estimatedRisk,
+            recommendedRepairTime: currentTemplate.recommendedRepairTime
           });
-          setSimLogs(prev => [...prev, '✓ Step 4: AI Priority algorithm scored severity at 94/100 (High Risk).']);
-          showToast('Step 4: Priority Score (94/100) generated.', 'info');
+          setSimLogs(prev => [...prev, `✓ Step 4: AI Priority algorithm scored severity at ${currentTemplate.priorityScore}/100.`]);
+          showToast(`Step 4: Priority Score (${currentTemplate.priorityScore}/100) generated.`, 'info');
         }
         break;
       }
@@ -684,10 +875,13 @@ export function Dashboard() {
     setSimActive(true);
     setSimStep(0);
     
+    const chosenTemplate = DEMO_TEMPLATES[Math.floor(Math.random() * DEMO_TEMPLATES.length)];
+    setSimTemplate(chosenTemplate);
+    
     let step = 0;
     let repId: string | null = null;
     
-    repId = runDemoStep(0, null);
+    repId = runDemoStep(0, null, chosenTemplate);
 
     simTimerRef.current = setInterval(() => {
       step += 1;
@@ -695,9 +889,9 @@ export function Dashboard() {
         setSimStep(step);
         repId = runDemoStep(step, repId);
       } else {
-        if (simTimerRef.current) clearInterval(simTimerRef.current);
+        resetDemoState();
       }
-    }, 2800);
+    }, 12000);
   };
 
   // Metrics for Impact Dashboard
@@ -712,7 +906,69 @@ export function Dashboard() {
       (r.source && r.source.toLowerCase().includes(q))
     );
   });
-  const resolvedReports = reports.filter(r => r.resolved);
+
+  const filteredFeedReports = reports
+    .filter(r => !r.resolved && r.status !== 'Resolved')
+    .filter(r => {
+      // 1. Filter by allowed sources
+      const isCitizenPortal = r.source === 'Citizen Portal';
+      const isReportForm = r.source === 'Citizen Report' || r.source === 'AI Detected (Citizen)';
+      
+      const sourceLower = (r.source || '').toLowerCase();
+      const isAiPipeline = (sourceLower.includes('ai') || sourceLower.includes('edge') || sourceLower.includes('camera') || sourceLower.includes('sensor')) && 
+                           sourceLower !== 'ai detected (citizen)' && 
+                           sourceLower !== 'citizen report' &&
+                           sourceLower !== 'citizen portal';
+
+      const isValidSource = isCitizenPortal || isReportForm || (isAiPipeline && settings.aiAnalysisDepth);
+      if (!isValidSource) return false;
+
+      // 2. Filter by severity
+      if (feedSeverityFilter !== 'All') {
+        const severityMap = {
+          'Critical': 'Critical',
+          'High': 'Active',
+          'Medium': 'Pending',
+          'Low': 'Scheduled'
+        };
+        if (r.severity !== severityMap[feedSeverityFilter]) return false;
+      }
+
+      // 3. Filter by search query
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        return (
+          r.title.toLowerCase().includes(q) ||
+          r.location.toLowerCase().includes(q) ||
+          r.severity.toLowerCase().includes(q) ||
+          (r.source && r.source.toLowerCase().includes(q))
+        );
+      }
+
+      return true;
+    })
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  const resolvedReports = reports
+    .filter(r => r.resolved || r.status === 'Resolved')
+    .sort((a, b) => {
+      const timeA = a.resolvedAt || (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+      const timeB = b.resolvedAt || (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+      return timeB - timeA;
+    });
+
+  const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const resolvedTodayCount = resolvedReports.filter(r => r.actualCompletionDate === todayStr).length;
+
+  const parsedTimes = resolvedReports.map(r => parseInt(r.resolutionTime || '42')).filter(t => !isNaN(t));
+  const avgResolutionTime = parsedTimes.length > 0 
+    ? Math.round(parsedTimes.reduce((sum, t) => sum + t, 0) / parsedTimes.length) 
+    : 42;
+
+  const successRate = reports.length > 0 
+    ? Math.round((resolvedReports.length / reports.length) * 100) 
+    : 100;
+
   const totalDetectedCount = reports.length;
   const totalRepairedCount = resolvedReports.length;
   const activeCount = activeReports.length;
@@ -735,10 +991,33 @@ export function Dashboard() {
   const selectedReport = reports.find(r => r.id === selectedReportId);
 
   // Authority Action columns
-  const pendingReviewReports = activeReports.filter(r => r.status === 'Detected');
-  const criticalHazardsReports = activeReports.filter(r => r.status === 'Verified');
-  const scheduledRepairsReports = activeReports.filter(r => r.status === 'Assigned');
-  const activeRepairsReports = activeReports.filter(r => r.status === 'Repairing');
+  const reviewAndVerifyReports = activeReports
+    .filter(r => r.status === 'Detected' || r.status === 'Verified')
+    .sort((a, b) => {
+      const severityOrder: Record<string, number> = {
+        'Critical': 1,
+        'Active': 2,
+        'Pending': 3,
+        'Scheduled': 4
+      };
+      const orderA = severityOrder[a.severity] || 5;
+      const orderB = severityOrder[b.severity] || 5;
+      
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeA - timeB;
+    });
+
+  const dispatchQueueReports = activeReports.filter(r => r.status === 'Assigned');
+  const waitingQueueReports = sortQueuedHazards(activeReports.filter(r => r.status === 'Queued'));
+  
+  const activeRepairsReports = activeReports.filter(r => 
+    r.status === 'In Progress' || r.status === 'Delayed' || r.status === 'Awaiting Resolution' || r.status === 'Repairing'
+  );
 
   return (
     <div className="p-6 max-w-[1440px] mx-auto pb-24 animate-fade-in-up space-y-6">
@@ -757,14 +1036,33 @@ export function Dashboard() {
               <span className="text-blue-400">ℹ</span>
             )}
           </div>
-          <div className="flex-1 text-xs font-semibold tracking-wide">
+          <div className="flex-1 text-xs font-semibold tracking-wide whitespace-pre-line">
             {justNotification.message}
           </div>
         </div>
       )}
 
+      {/* 0. OPERATIONS HEADER */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-slate-900 text-white p-6 rounded-2xl shadow-sm">
+        <div>
+          <h2 className="text-lg font-black uppercase tracking-wider flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+            City Operations Overview
+          </h2>
+          <p className="text-[11px] text-slate-300 mt-1 font-medium">
+            Real-time monitoring, AI risk auditing, and decision support console.
+          </p>
+        </div>
+        <Link 
+          to="/municipal" 
+          className="flex items-center justify-center gap-2 bg-safety-yellow hover:bg-yellow-400 text-primary font-black px-6 py-3 rounded-xl transition-all shadow-md text-xs tracking-wider uppercase cursor-pointer"
+        >
+          Open Operations Center <ArrowRight className="w-4 h-4" />
+        </Link>
+      </div>
+
       {/* 1. IMPACT DASHBOARD */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6">
         <div className="bg-white p-4 rounded-xl border border-border-subtle shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
           <div>
             <span className="text-[9px] font-bold text-text-secondary uppercase tracking-widest block mb-1">Road Safety Score</span>
@@ -867,13 +1165,13 @@ export function Dashboard() {
       )}
 
       {/* 3. SPLIT MAIN GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_436px] gap-6">
         
         {/* Left Columns (Map, KanBan, Before/After) */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="space-y-6">
           
           {/* Map Card */}
-          <div className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden relative group h-[420px] transition-all hover:shadow-md">
+          <div className="bg-white rounded-xl border border-border-subtle shadow-sm overflow-hidden relative group h-[350px] transition-all hover:shadow-md">
             <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
               <div className="glass-card px-3 py-1.5 rounded-lg flex items-center gap-2.5 shadow-sm bg-white/95">
                 <span className="w-2 h-2 rounded-full bg-safety-yellow animate-ping"></span>
@@ -1032,182 +1330,528 @@ export function Dashboard() {
                 </div>
                 
                 {selectedReport.status !== 'Resolved' && (
-                  <button 
-                    onClick={() => handleResolve(selectedReport.id)}
-                    className="w-full bg-green-600 text-white hover:bg-green-700 h-7 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                  <Link 
+                    to="/municipal"
+                    className="w-full bg-slate-900 hover:bg-black text-white h-7 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
                   >
-                    <Check className="w-3 h-3" /> Complete Repair
-                  </button>
+                    Open in Operations Center →
+                  </Link>
                 )}
               </div>
             )}
           </div>
 
-          {/* 4. AUTHORITY ACTION PANEL */}
+          {/* 4. OPERATIONS QUEUE MONITORING */}
+          <section className="bg-white rounded-xl border border-border-subtle shadow-sm p-4 !mt-2">
+            {/* Panel header */}
+            <div className="flex items-center justify-between border-b border-border-subtle pb-2 mb-4">
+              <h3 className="font-bold text-xs text-primary flex items-center gap-1.5 uppercase tracking-wider">
+                <Layers className="w-4 h-4 text-primary" /> Operations Queue Monitoring
+              </h3>
+              <span className="text-[9px] text-text-secondary font-semibold">Real-Time Queue Health & Distribution</span>
+            </div>
+            {/* ── 3-column Kanban grid ──────────────────────────────────────── */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
+
+              {/* ── Column 1: Review & Verify ────────────────────────────────── */}
+              <div className="min-w-0 flex flex-col bg-slate-50/50 rounded-xl border border-dashed border-border-subtle overflow-hidden" style={{ height: '460px' }}>
+                {/* Lane header */}
+                <div className="flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-secondary px-3 py-2 border-b border-border-subtle bg-white/60 flex-shrink-0">
+                  <span>Review & Verify</span>
+                  <span className="bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[8px] font-black">{reviewAndVerifyReports.length}</span>
+                </div>
+
+                {/* Scrollable card list */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+                  {reviewAndVerifyReports.length === 0 ? (
+                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-8">No issues to review</div>
+                  ) : (
+                    reviewAndVerifyReports.map(r => (
+                      <div key={r.id} className="w-full bg-white p-3.5 rounded-lg border border-border-subtle flex flex-col justify-between h-[230px] hover:shadow-md transition-all duration-300 animate-fade-in-up box-border">
+                        <div className="space-y-1.5 flex-1 flex flex-col justify-start min-w-0">
+                          <div className="flex justify-between items-start gap-1">
+                            <span className="text-[10px] font-bold text-primary truncate flex-1 min-w-0">{r.title}</span>
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full border flex-shrink-0 ${getStatusBadgeClass(r.status)}`}>
+                              {r.status}
+                            </span>
+                          </div>
+                          <div className="text-[9px] text-text-secondary truncate">📍 {r.location}</div>
+                          <div className="flex justify-between items-center text-[8.5px] font-semibold text-text-secondary/70 pt-1 border-t border-slate-100/50">
+                            <span className="truncate flex-1 min-w-0">Src: <strong className="text-primary font-bold">{r.source}</strong></span>
+                            <span className="flex-shrink-0 ml-1">{formatTimeAgo(r.timestamp)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2 pt-2 border-t border-slate-100/50 mt-auto flex-shrink-0">
+                          <div className="flex justify-between items-center text-[8px] text-text-secondary gap-1.5">
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${
+                              r.severity === 'Critical' ? 'bg-red-100 text-red-700' :
+                              r.severity === 'Active' ? 'bg-orange-100 text-orange-700' :
+                              r.severity === 'Pending' ? 'bg-blue-100 text-blue-700' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>
+                              {r.severity === 'Active' ? 'High' : r.severity === 'Pending' ? 'Medium' : r.severity === 'Scheduled' ? 'Low' : r.severity}
+                            </span>
+                            {r.status === 'Verified' && (
+                              <div className="text-right min-w-0 overflow-hidden leading-tight">
+                                <span className="text-[7.5px] block text-purple-600 font-bold uppercase tracking-wider truncate">AI Rec: {getAiRecommendation(r)}</span>
+                                <span className="text-[7.5px] text-slate-500 block truncate">({getTeamAvailability(getAiRecommendation(r))})</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <Link 
+                            to="/municipal" 
+                            className="w-full bg-slate-900 hover:bg-black text-white text-[9.5px] font-bold py-2 rounded transition-all text-center block cursor-pointer"
+                          >
+                            Manage in Operations Center →
+                          </Link>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* ── Column 2: Dispatch Queue ─────────────────────────────────── */}
+              <div className="min-w-0 flex flex-col bg-slate-50/50 rounded-xl border border-dashed border-border-subtle overflow-hidden" style={{ height: '460px' }}>
+                <div className="flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-secondary px-3 py-2 border-b border-border-subtle bg-white/60 flex-shrink-0">
+                  <span>Dispatch Queue</span>
+                  <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{dispatchQueueReports.length}</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+                  {dispatchQueueReports.length === 0 ? (
+                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-8">No scheduled dispatches</div>
+                  ) : (
+                    dispatchQueueReports.map(r => (
+                      <div key={r.id} className="w-full bg-white p-3.5 rounded-lg border border-border-subtle flex flex-col justify-between h-[230px] hover:shadow-md transition-all duration-300 animate-fade-in-up box-border">
+                        <div className="space-y-1.5 flex-1 flex flex-col justify-start min-w-0">
+                          <div className="flex justify-between items-start gap-1">
+                            <span className="text-[10px] font-bold text-primary truncate flex-1 min-w-0">{r.title}</span>
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full border flex-shrink-0 ${getStatusBadgeClass(r.status)}`}>
+                              {r.status}
+                            </span>
+                          </div>
+                          <div className="text-[9px] text-text-secondary truncate">📍 {r.location}</div>
+
+                          <div className="flex flex-col gap-0.5 pt-1.5 border-t border-slate-100/50">
+                            <span className="text-[8.5px] text-text-secondary truncate">Team: <strong className="text-primary font-bold">{r.assignedTeam || 'Crew Assigned'}</strong></span>
+                            <span className="text-[8.5px] text-text-secondary">Est. Arrival: <strong className="text-primary font-bold">{r.severity === 'Critical' ? '12 Mins' : r.severity === 'Active' ? '25 Mins' : '45 Mins'}</strong></span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2 pt-1.5 border-t border-slate-100/50 mt-auto flex-shrink-0">
+                          <div className="flex justify-between items-center text-[8px] text-text-secondary gap-1.5">
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${
+                              r.severity === 'Critical' ? 'bg-red-100 text-red-700' :
+                              r.severity === 'Active' ? 'bg-orange-100 text-orange-700' :
+                              r.severity === 'Pending' ? 'bg-blue-100 text-blue-700' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>
+                              {r.severity === 'Active' ? 'High' : r.severity === 'Pending' ? 'Medium' : r.severity === 'Scheduled' ? 'Low' : r.severity}
+                            </span>
+                          </div>
+                          <Link 
+                            to="/municipal" 
+                            className="w-full bg-slate-900 hover:bg-black text-white text-[9.5px] font-bold py-1.5 rounded transition-all text-center block whitespace-nowrap cursor-pointer"
+                          >
+                            Manage Dispatch →
+                          </Link>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* ── Column 3: Waiting Queue ──────────────────────────────────── */}
+              <div className="min-w-0 flex flex-col bg-slate-50/50 rounded-xl border border-dashed border-border-subtle overflow-hidden" style={{ height: '460px' }}>
+                <div className="flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-secondary px-3 py-2 border-b border-border-subtle bg-white/60 flex-shrink-0">
+                  <span>Waiting Queue</span>
+                  <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[8px] font-black animate-pulse">{waitingQueueReports.length}</span>
+                </div>
+
+                {waitingQueueReports.length > 0 && (
+                  <div className="grid grid-cols-3 gap-1 px-3 pt-3 flex-shrink-0">
+                    <div className="bg-white p-1 rounded border border-border-subtle/50 text-center">
+                      <span className="block text-[6.5px] uppercase tracking-wider text-text-secondary/60">Waiting</span>
+                      <span className="text-primary font-black block text-[9px]">{waitingQueueReports.length}</span>
+                    </div>
+                    <div className="bg-white p-1 rounded border border-border-subtle/50 text-center">
+                      <span className="block text-[6.5px] uppercase tracking-wider text-text-secondary/60">Avg Wait</span>
+                      <span className="text-primary font-black block text-[9px]">
+                        {Math.round(waitingQueueReports.reduce((sum, r) => sum + (now.getTime() - (r.queuedAt || now.getTime())), 0) / (waitingQueueReports.length * 60000))}m
+                      </span>
+                    </div>
+                    <div className="bg-white p-1 rounded border border-border-subtle/50 text-center">
+                      <span className="block text-[6.5px] uppercase tracking-wider text-text-secondary/60">Longest</span>
+                      <span className="text-red-600 font-black block text-[9px]">
+                        {Math.round((now.getTime() - Math.min(...waitingQueueReports.map(r => r.queuedAt || now.getTime()))) / 60000)}m
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+                  {waitingQueueReports.length === 0 ? (
+                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-8">Queue is empty</div>
+                  ) : (
+                    waitingQueueReports.map((r, qIndex) => {
+                      const waitTimeMs = now.getTime() - (r.queuedAt || Date.now());
+                      const waitTimeMins = Math.max(1, Math.round(waitTimeMs / 60000));
+                      const isSlaBreached = r.severity === 'Critical' && waitTimeMins >= 2;
+
+                      return (
+                        <div key={r.id} className="w-full bg-white p-3.5 rounded-lg border border-border-subtle flex flex-col justify-between h-[230px] hover:shadow-md transition-all duration-300 animate-fade-in-up box-border">
+                          <div className="space-y-1.5 flex-1 flex flex-col justify-start min-w-0">
+                            <div className="flex justify-between items-start gap-1">
+                              <span className="text-[10px] font-bold text-primary truncate flex-1 min-w-0">{r.title}</span>
+                              <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 flex-shrink-0">
+                                #{qIndex + 1}
+                              </span>
+                            </div>
+
+                            <div className="text-[9px] text-text-secondary truncate">📍 {r.location}</div>
+
+                            <div className="flex justify-between items-center text-[8.5px] font-semibold text-text-secondary/70 pt-1 border-t border-slate-100/50">
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${
+                                r.severity === 'Critical' ? 'bg-red-100 text-red-700' :
+                                r.severity === 'Active' ? 'bg-orange-100 text-orange-700' :
+                                r.severity === 'Pending' ? 'bg-blue-100 text-blue-700' :
+                                'bg-slate-100 text-slate-700'
+                              }`}>
+                                {r.severity === 'Active' ? 'High' : r.severity === 'Pending' ? 'Medium' : r.severity === 'Scheduled' ? 'Low' : r.severity}
+                              </span>
+                              <span className="text-purple-600 font-bold">Risk: {r.priorityScore || 50}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-1.5 pt-1.5 border-t border-slate-100/50 mt-auto flex-shrink-0">
+                            <div className="flex items-center justify-between text-[8.5px] font-semibold">
+                              <span className="text-text-secondary">Reports: {r.citizenReportsCount || 1}</span>
+                              <span className="text-orange-600 font-black animate-pulse">{waitTimeMins}m waiting</span>
+                            </div>
+
+                            {isSlaBreached && (
+                              <div className="bg-red-50 border border-red-200 rounded p-1 text-[8px] text-red-700 font-black text-center animate-pulse">
+                                ⚠️ SLA Breach: Delayed Dispatch!
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </section>
+
+          {/* 4.5. ACTIVE REPAIRS */}
           <section className="bg-white rounded-xl border border-border-subtle shadow-sm p-4 space-y-4">
             <div className="flex items-center justify-between border-b border-border-subtle pb-2 mb-3">
               <h3 className="font-bold text-xs text-primary flex items-center gap-1.5 uppercase tracking-wider">
-                <Users className="w-4 h-4 text-primary" /> Authority Action Panel
+                <HardHat className="w-4 h-4 text-primary animate-pulse" /> Active Repairs
               </h3>
-              <span className="text-[9px] text-text-secondary font-semibold">Simulate Operations Control</span>
+              <span className="text-[9px] text-text-secondary font-semibold">Track & Manage Ongoing Operations</span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              
-              {/* Column 1: Review Issue / Awaiting Review */}
-              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2">
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-text-secondary px-1 border-b pb-1.5">
-                  <span>Review Issue</span>
-                  <span className="bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[8px]">{pendingReviewReports.length}</span>
-                </div>
-                
-                <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
-                  {pendingReviewReports.length === 0 ? (
-                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">All reviewed</div>
-                  ) : (
-                    pendingReviewReports.map(r => (
-                      <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
-                        <div className="text-[10px] font-bold text-primary truncate">{r.title}</div>
-                        <div className="text-[9px] text-text-secondary truncate">{r.location}</div>
-                        <button 
-                          onClick={() => handleVerify(r.id)}
-                          className="w-full bg-slate-900 hover:bg-black text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
-                        >
-                          Verify Hazard
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Column 2: Assign Team */}
-              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2">
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-text-secondary px-1 border-b pb-1.5">
-                  <span>Assign Team</span>
-                  <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[8px]">{criticalHazardsReports.length}</span>
-                </div>
-
-                <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
-                  {criticalHazardsReports.length === 0 ? (
-                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">No verified hazards</div>
-                  ) : (
-                    criticalHazardsReports.map(r => (
-                      <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
-                        <div className="text-[10px] font-bold text-primary truncate flex justify-between items-center">
-                          <span>{r.title}</span>
-                          <span className={`text-[8px] px-1 rounded ${r.severity === 'Critical' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                            {r.severity === 'Critical' ? 'Crit' : 'High'}
-                          </span>
-                        </div>
-                        <button 
-                          onClick={() => handleAssign(r.id)}
-                          className="w-full bg-safety-yellow hover:opacity-90 text-primary text-[9px] font-black py-1 rounded transition-all cursor-pointer"
-                        >
-                          Assign Team Gamma
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Column 3: Start Repair */}
-              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2">
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-text-secondary px-1 border-b pb-1.5">
-                  <span>Start Repair</span>
-                  <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[8px]">{scheduledRepairsReports.length}</span>
-                </div>
-
-                <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
-                  {scheduledRepairsReports.length === 0 ? (
-                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">No scheduled dispatches</div>
-                  ) : (
-                    scheduledRepairsReports.map(r => (
-                      <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
-                        <div className="text-[10px] font-bold text-primary truncate">{r.title}</div>
-                        <div className="text-[8px] text-blue-600 font-bold italic truncate">{r.assignedTeam || 'Crew Assigned'}</div>
-                        <button 
-                          onClick={() => handleStartRepair(r.id)}
-                          className="w-full bg-blue-600 hover:bg-blue-700 text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
-                        >
-                          Start Repair
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Column 4: Complete Repair */}
-              <div className="bg-slate-50/50 p-2.5 rounded-xl border border-dashed border-border-subtle flex flex-col space-y-2">
-                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-text-secondary px-1 border-b pb-1.5">
-                  <span>Complete Repair</span>
-                  <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded text-[8px] animate-pulse">{activeRepairsReports.length}</span>
-                </div>
-
-                <div className="flex-1 space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-1">
-                  {activeRepairsReports.length === 0 ? (
-                    <div className="text-[9px] text-center text-text-secondary opacity-60 py-6">No active repairs</div>
-                  ) : (
-                    activeRepairsReports.map(r => (
-                      <div key={r.id} className="bg-white p-2.5 rounded-lg border border-border-subtle flex flex-col space-y-1.5 hover:border-primary/30 transition-colors">
-                        <div className="text-[10px] font-bold text-primary truncate">{r.title}</div>
-                        <div className="text-[9px] text-text-secondary truncate">{r.location}</div>
-                        <button 
-                          onClick={() => handleResolve(r.id)}
-                          className="w-full bg-green-600 hover:bg-green-700 text-white text-[9px] font-bold py-1 rounded transition-colors cursor-pointer"
-                        >
-                          Complete Repair
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-            </div>
-          </section>
-
-          {/* 5. BEFORE & AFTER REPAIR COMPARISON */}
-          <section className="bg-white rounded-xl border border-border-subtle shadow-sm p-4">
-            <h3 className="font-bold text-xs text-primary border-b border-border-subtle pb-2 mb-3 uppercase tracking-wider flex items-center gap-1.5">
-              <Camera className="w-4 h-4 text-green-600" /> Before & After Repair Comparison
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {resolvedReports.length === 0 ? (
-                <div className="col-span-2 text-center text-xs text-text-secondary py-8 bg-slate-50/50 rounded-xl border border-dashed border-border-subtle">
-                  No resolved repairs available yet. Guide an active hazard to resolution to view details.
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 w-full">
+              {activeRepairsReports.length === 0 ? (
+                <div className="col-span-full text-center text-xs text-text-secondary py-8 bg-slate-50/50 rounded-xl border border-dashed border-border-subtle">
+                  No active repairs in progress.
                 </div>
               ) : (
-                resolvedReports.slice(0, 2).map(r => (
-                  <div key={r.id} className="border border-border-subtle rounded-xl p-3 bg-slate-50 flex flex-col space-y-3">
-                    <div className="flex justify-between items-center border-b pb-1.5">
-                      <span className="text-[10px] font-bold text-primary truncate pr-2">{r.title}</span>
-                      <span className="text-[8px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-black uppercase">resolved</span>
-                    </div>
+                activeRepairsReports.map(r => {
+                  const nowMs = now.getTime();
+                  const elapsedMs = nowMs - (r.startedAt || nowMs);
+                  const elapsedMins = Math.floor(elapsedMs / 60000);
+                  const isSlaBreached = r.status !== 'Resolved' && r.startedAt && r.slaMinutes && elapsedMins >= r.slaMinutes;
 
-                    {/* Drag-based Image Slider */}
-                    <ImageComparisonSlider 
-                      beforeUrl={r.beforeImageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80'} 
-                      afterUrl={r.afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80'} 
-                    />
+                  const autoProgress = getDisplayProgress(r, nowMs);
+                  const progressVal = autoProgress;
+                  const isAutoDelayed = isDelayed(r, nowMs);
+                  const remainingEta = Math.max(0, (r.etaMinutes || 0) - elapsedMins);
 
-                    <div className="space-y-1 bg-white p-2 rounded border border-border-subtle text-[9px]">
-                      <div className="text-[8px] text-text-secondary font-bold uppercase tracking-wider">Repair Notes</div>
-                      <p className="text-text-secondary leading-snug font-medium italic">"{r.repairNotes}"</p>
-                    </div>
+                  const barColor =
+                    progressVal >= 100
+                      ? 'bg-green-500'
+                      : (r.status === 'Delayed' || isAutoDelayed)
+                      ? 'bg-red-500'
+                      : progressVal >= 80
+                      ? 'bg-amber-500'
+                      : 'bg-orange-500';
 
-                    <div className="flex justify-between items-center text-[9px] font-semibold text-text-secondary pt-0.5">
-                      <span>Crew: <strong className="text-primary font-bold">{r.assignedTeam}</strong></span>
-                      <span>Date: <strong className="text-primary font-bold">{r.actualCompletionDate}</strong></span>
+                  const canComplete =
+                    progressVal >= 100 ||
+                    ((r.status === 'Delayed' || isAutoDelayed) && progressVal >= 95);
+
+                  return (
+                    <div
+                      key={r.id}
+                      className={`w-full p-4 rounded-xl border transition-all duration-300 hover:shadow-md flex flex-col justify-between h-[235px] box-border ${
+                        isSlaBreached
+                          ? 'border-red-500 bg-red-50/40 shadow-sm shadow-red-100/50'
+                          : (r.status === 'Delayed' || isAutoDelayed)
+                          ? 'border-orange-300 bg-orange-50/20'
+                          : 'bg-white border-border-subtle'
+                      }`}
+                    >
+                      <div className="space-y-2 flex-1 flex flex-col justify-start min-w-0">
+                        <div className="flex justify-between items-start gap-1">
+                          <span className="text-xs font-bold text-primary truncate flex-1 min-w-0">{r.title}</span>
+                          <span className={`text-[8.5px] font-black px-2 py-0.5 rounded-full border flex-shrink-0 ${getStatusBadgeClass(r.status)}`}>
+                            {r.status === 'Repairing' ? 'In Progress' : r.status}
+                          </span>
+                        </div>
+
+                        <div className="text-[10px] text-text-secondary flex justify-between items-center gap-1">
+                          <span className="truncate flex-1 min-w-0">📍 {r.location}</span>
+                          <span className={`text-[8px] font-black px-1.5 py-0.5 rounded flex-shrink-0 ${
+                            r.severity === 'Critical' ? 'bg-red-100 text-red-700' :
+                            r.severity === 'Active' ? 'bg-orange-100 text-orange-700' :
+                            r.severity === 'Pending' ? 'bg-blue-100 text-blue-700' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                            {r.severity === 'Active' ? 'High' : r.severity === 'Pending' ? 'Medium' : r.severity === 'Scheduled' ? 'Low' : r.severity}
+                          </span>
+                        </div>
+
+                        {(r.status === 'Delayed' || isAutoDelayed) && r.delayReason && (
+                          <span className="text-[8px] bg-red-50 border border-red-200/50 text-red-600 px-2 py-0.5 rounded font-black block truncate" title={r.delayReason}>
+                            ⚠️ {r.delayReason}
+                          </span>
+                        )}
+
+                        {isAutoDelayed && r.status !== 'Delayed' && (
+                          <div className="bg-orange-100 border border-orange-300 text-orange-700 text-[8px] font-black px-2 py-0.5 rounded text-center animate-pulse truncate">
+                            Overdue
+                          </div>
+                        )}
+
+                        {isSlaBreached && (
+                          <div className="bg-red-600 text-white font-black text-[8px] px-2 py-0.5 rounded text-center animate-pulse truncate">
+                            SLA BREACH: {elapsedMins}m / {r.slaMinutes}m
+                          </div>
+                        )}
+
+                        {/* Auto-progress bar */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-center text-[9px] font-bold text-text-secondary">
+                            <span>Progress</span>
+                            <span className={progressVal >= 100 ? 'text-green-600 font-black' : progressVal >= 80 ? 'text-amber-600 font-black' : ''}>{progressVal}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-700 ease-out ${barColor}`}
+                              style={{ width: `${progressVal}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 mt-auto flex-shrink-0 pt-2 border-t border-slate-100/50">
+                        <div className="text-[10px] text-text-secondary flex justify-between items-center">
+                          <span className="truncate flex-1 min-w-0">Team: <strong className="text-primary font-bold">{r.assignedTeam || 'Crew'}</strong></span>
+                          <span className="flex-shrink-0 ml-1"><strong className={remainingEta === 0 ? 'text-red-600 animate-pulse' : 'text-primary'}>{remainingEta > 0 ? `${remainingEta}m left` : 'Overdue'}</strong></span>
+                        </div>
+
+                        <div className="pt-1">
+                          <Link
+                            to="/municipal"
+                            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 text-[10px] font-bold h-8 rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            View in Operations Center →
+                          </Link>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </section>
+
+          {/* 4.5. FIELD CREW STATUS PANEL */}
+          <section className="bg-white rounded-xl border border-border-subtle shadow-sm p-4 space-y-4 animate-fade-in-up">
+            <div className="flex items-center justify-between border-b border-border-subtle pb-2 mb-3">
+              <h3 className="font-bold text-xs text-primary flex items-center gap-1.5 uppercase tracking-wider">
+                <HardHat className="w-4 h-4 text-primary animate-pulse" /> Field Crew Status
+              </h3>
+              <span className="text-[9px] text-text-secondary font-semibold">Real-Time Dispatch Tracking</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-start">
+              {['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'].map((team) => {
+                const teamReports = reports.filter(r => 
+                  r.assignedTeam === team && 
+                  !r.resolved && 
+                  r.status !== 'Resolved' && 
+                  r.status !== 'Completed' &&
+                  (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+                );
+                const activeCount = teamReports.length;
+                const isExpanded = !!expandedTeams[team];
+
+                let statusText = 'Available';
+                let dotColorClass = 'bg-green-500';
+                let pingColorClass = 'bg-green-400';
+                let badgeColorClass = 'bg-green-50 text-green-700 border-green-200';
+
+                if (activeCount > 0) {
+                  const hasInProgress = teamReports.some(r => r.status === 'In Progress' || r.status === 'Repairing');
+                  const hasCritical = teamReports.some(r => r.severity === 'Critical');
+                  const hasDelayed = teamReports.some(r => r.status === 'Delayed');
+                  const hasAwaiting = teamReports.some(r => r.status === 'Awaiting Resolution');
+
+                  if (hasCritical) {
+                    statusText = 'Emergency Response';
+                    dotColorClass = 'bg-red-500';
+                    pingColorClass = 'bg-red-400';
+                    badgeColorClass = 'bg-red-50 text-red-700 border-red-200';
+                  } else if (hasDelayed) {
+                    statusText = 'Delayed';
+                    dotColorClass = 'bg-rose-500';
+                    pingColorClass = 'bg-rose-400';
+                    badgeColorClass = 'bg-rose-50 text-rose-700 border-rose-200';
+                  } else if (hasInProgress) {
+                    statusText = 'Repairing';
+                    dotColorClass = 'bg-orange-500';
+                    pingColorClass = 'bg-orange-400';
+                    badgeColorClass = 'bg-orange-50 text-orange-700 border-orange-200';
+                  } else if (hasAwaiting) {
+                    statusText = 'Awaiting QA';
+                    dotColorClass = 'bg-cyan-500';
+                    pingColorClass = 'bg-cyan-400';
+                    badgeColorClass = 'bg-cyan-50 text-cyan-700 border-cyan-200';
+                  } else {
+                    statusText = 'Traveling';
+                    dotColorClass = 'bg-yellow-500';
+                    pingColorClass = 'bg-yellow-400';
+                    badgeColorClass = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                  }
+                }
+
+                const toggleTeamExpand = () => {
+                  if (activeCount > 1) {
+                    setExpandedTeams(prev => ({ ...prev, [team]: !prev[team] }));
+                  }
+                };
+
+                const renderTaskItem = (r: Report) => {
+                  const elapsedMs = now.getTime() - (r.startedAt || now.getTime());
+                  const elapsedMins = Math.floor(elapsedMs / 60000);
+                  const remainingEta = Math.max(0, (r.etaMinutes || 0) - elapsedMins);
+                  const progressVal = getDisplayProgress(r, now.getTime());
+                  const isAutoDelayed = isDelayed(r, now.getTime());
+
+                  let etaText = 'Pending';
+                  if (r.status === 'Assigned') {
+                    etaText = r.severity === 'Critical' ? '12m ETA' : r.severity === 'Active' ? '25m ETA' : '45m ETA';
+                  } else if (remainingEta > 0) {
+                    etaText = `${remainingEta}m left`;
+                  } else {
+                    etaText = 'Overdue';
+                  }
+
+                  return (
+                    <div key={r.id} className="pt-2 border-t border-slate-100 first:border-0 first:pt-0 space-y-1 text-xs text-left">
+                      <div className="flex justify-between items-start gap-1">
+                        <span className="text-[10px] font-bold text-primary truncate flex-1 min-w-0" title={r.title}>{r.title}</span>
+                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border flex-shrink-0 leading-none ${getStatusBadgeClass(r.status)}`}>
+                          {r.status === 'Repairing' ? 'In Progress' : r.status}
+                        </span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-[9px] text-text-secondary gap-1">
+                        <span className="truncate flex-1 min-w-0">📍 {r.location}</span>
+                        <span className={`font-bold flex-shrink-0 ${remainingEta === 0 && r.status !== 'Assigned' ? 'text-red-600 animate-pulse font-black' : 'text-primary'}`}>{etaText}</span>
+                      </div>
+
+                      {r.status !== 'Assigned' && (
+                        <div className="space-y-0.5 pt-0.5">
+                          <div className="flex justify-between items-center text-[8px] text-text-secondary font-bold">
+                            <span>Progress</span>
+                            <span className={progressVal >= 100 ? 'text-green-600 font-black' : ''}>{progressVal}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-500 ${
+                                progressVal >= 100 ? 'bg-green-500' : (r.status === 'Delayed' || isAutoDelayed) ? 'bg-red-500' : 'bg-orange-500'
+                              }`}
+                              style={{ width: `${progressVal}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div 
+                    key={team} 
+                    onClick={toggleTeamExpand}
+                    className={`bg-slate-50/50 p-3.5 rounded-xl border border-border-subtle hover:shadow-md hover:border-slate-300 transition-all duration-300 flex flex-col justify-between space-y-3 select-none ${
+                      activeCount > 1 ? 'cursor-pointer hover:border-purple-300 shadow-sm bg-white/40' : ''
+                    }`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-black text-primary">{team}</span>
+                        <span className="text-[8px] text-text-secondary/70 font-semibold mt-0.5">Capacity: {activeCount}/2</span>
+                        {activeCount > 0 && (
+                          <span className="text-[8px] text-purple-600 font-bold">Active Tasks: {activeCount}</span>
+                        )}
+                      </div>
+                      <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[8px] font-black uppercase tracking-wider ${badgeColorClass}`}>
+                        <span className="relative flex h-2 w-2">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${pingColorClass}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${dotColorClass}`}></span>
+                        </span>
+                        <span>{statusText}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                      {activeCount === 0 ? (
+                        <div className="text-center py-4 text-text-secondary/50 italic text-[10px]">
+                          Available (On Standby)
+                        </div>
+                      ) : isExpanded ? (
+                        <div className="space-y-3">
+                          {teamReports.map(r => renderTaskItem(r))}
+                          <div className="pt-2 border-t border-slate-100 flex justify-end items-center text-[8.5px] font-black text-purple-600 hover:text-purple-700 transition-colors uppercase tracking-wider">
+                            <div className="flex items-center gap-0.5">
+                              <span>Collapse</span>
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {renderTaskItem(teamReports[0])}
+                          {activeCount > 1 && (
+                            <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-[8.5px] font-black text-purple-600 hover:text-purple-700 transition-colors uppercase tracking-wider">
+                              <span>+ {activeCount - 1} more active task{activeCount - 1 > 1 ? 's' : ''}</span>
+                              <div className="flex items-center gap-0.5">
+                                <span>Expand</span>
+                                <ChevronDown className="w-3.5 h-3.5 animate-bounce" />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+
 
         </div>
 
@@ -1252,17 +1896,31 @@ export function Dashboard() {
               </h3>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-              {filteredActiveReports.length === 0 ? (
+            {/* Severity Filter Row */}
+            <div className="flex gap-1.5 p-2 bg-slate-50 border-b border-border-subtle overflow-x-auto custom-scrollbar">
+              {(['All', 'Critical', 'High', 'Medium', 'Low'] as const).map((sev) => (
+                <button
+                  key={sev}
+                  onClick={() => setFeedSeverityFilter(sev)}
+                  className={`px-3 py-1 rounded text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer ${
+                    feedSeverityFilter === sev
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-white text-text-secondary hover:bg-slate-100 border border-border-subtle/60'
+                  }`}
+                >
+                  {sev}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+              {filteredFeedReports.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-48 text-center text-text-secondary opacity-60">
-                  <ShieldCheck className="w-8 h-8 text-green-500 mb-1 animate-bounce" />
-                  <p className="font-bold text-xs text-primary">All Clear</p>
-                  <p className="text-[10px] mt-0.5">
-                    {searchQuery ? 'No active hazards match the search query.' : 'No active hazards detected in this sector.'}
-                  </p>
+                  <ShieldCheck className="w-8 h-8 text-green-500 mb-1" />
+                  <p className="font-bold text-xs text-primary">No hazards have been reported yet.</p>
                 </div>
               ) : (
-                filteredActiveReports.map((report) => {
+                filteredFeedReports.map((report) => {
                   const isSelected = selectedReportId === report.id;
                   const isCritical = report.severity === 'Critical';
                   
@@ -1286,12 +1944,23 @@ export function Dashboard() {
                         <div className="flex-grow min-w-0">
                           <div className="flex justify-between items-start mb-0.5">
                             <p className="text-xs font-bold text-primary truncate leading-none">{report.title}</p>
-                            <span className={`text-[8px] font-black px-1.5 rounded-full ${isCritical ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                              {report.severity}
+                            <span className={`text-[8px] font-black px-1.5 rounded-full ${
+                              report.severity === 'Critical' ? 'bg-red-100 text-red-700' : 
+                              report.severity === 'Active' ? 'bg-orange-100 text-orange-700' : 
+                              report.severity === 'Pending' ? 'bg-blue-100 text-blue-700' : 
+                              'bg-slate-100 text-slate-700'
+                            }`}>
+                              {report.severity === 'Active' ? 'High' : 
+                               report.severity === 'Pending' ? 'Medium' : 
+                               report.severity === 'Scheduled' ? 'Low' : 
+                               report.severity}
                             </span>
                           </div>
-                          <p className="text-[10px] text-text-secondary truncate">{report.location} — {report.source}</p>
-                          <span className="text-[8px] bg-slate-100 text-slate-700 px-1 rounded mt-1 inline-block font-medium">Status: {report.status || 'Detected'}</span>
+                          <p className="text-[10px] text-text-secondary truncate">📍 {report.location}</p>
+                          <div className="flex justify-between items-center mt-1.5">
+                            <span className="text-[8px] text-text-secondary/60 italic">Reported: {formatTimeAgo(report.timestamp)}</span>
+                            <span className="text-[8px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold">Status: {report.status || 'Detected'}</span>
+                          </div>
                         </div>
                       </div>
 
@@ -1396,6 +2065,163 @@ export function Dashboard() {
                     </div>
                   );
                 })
+              )}
+            </div>
+          </div>
+
+          {/* PRIORITY QUEUE SECTION */}
+          <div className="bg-white rounded-xl border border-border-subtle shadow-sm flex flex-col h-[380px] overflow-hidden">
+            <div className="p-4 border-b border-border-subtle flex justify-between items-center bg-surface-bright/50">
+              <h3 className="text-xs font-bold text-primary flex items-center gap-1.5 uppercase tracking-wider">
+                <ShieldAlert className="w-4 h-4 text-red-600 animate-pulse" />
+                Priority Queue
+                <span className="bg-red-100 text-red-800 text-[8px] px-1.5 py-0.5 rounded-full font-black animate-pulse">URGENT</span>
+              </h3>
+              <span className="text-[9px] text-text-secondary font-semibold">Active Hazards Ranked by Urgency</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+              {activeReports.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center text-text-secondary opacity-60">
+                  <CheckCircle2 className="w-8 h-8 text-green-500 mb-1" />
+                  <p className="font-bold text-xs text-primary">No active hazards found.</p>
+                </div>
+              ) : (
+                [...activeReports]
+                  .sort((a, b) => calculateDynamicPriorityScore(b) - calculateDynamicPriorityScore(a))
+                  .map((r) => {
+                    const score = calculateDynamicPriorityScore(r);
+                    let colorClass = '';
+                    let scoreBadgeColor = '';
+                    if (score >= 90) {
+                      colorClass = 'border-red-200 bg-red-50/20 hover:bg-red-50/40 shadow-sm shadow-red-100/30';
+                      scoreBadgeColor = 'bg-red-100 text-red-700 border-red-200/60';
+                    } else if (score >= 70) {
+                      colorClass = 'border-orange-200 bg-orange-50/20 hover:bg-orange-50/40 shadow-sm shadow-orange-100/30';
+                      scoreBadgeColor = 'bg-orange-100 text-orange-700 border-orange-200/60';
+                    } else if (score >= 40) {
+                      colorClass = 'border-amber-200 bg-amber-50/20 hover:bg-amber-50/40 shadow-sm shadow-amber-100/30';
+                      scoreBadgeColor = 'bg-amber-100 text-amber-700 border-amber-200/60';
+                    } else {
+                      colorClass = 'border-slate-200 bg-slate-50/20 hover:bg-slate-50/40';
+                      scoreBadgeColor = 'bg-slate-100 text-slate-500 border-slate-200/60';
+                    }
+
+                    return (
+                      <div 
+                        key={r.id}
+                        className={`p-3 border rounded-xl flex flex-col transition-all cursor-pointer ${colorClass}`}
+                        onClick={() => setSelectedReportId(r.id)}
+                      >
+                        <div className="flex gap-2.5">
+                          <div className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center flex-shrink-0 text-center border font-black ${scoreBadgeColor}`}>
+                            <span className="text-[12px] leading-none">{score}</span>
+                            <span className="text-[6.5px] uppercase tracking-tighter font-extrabold mt-0.5">Score</span>
+                          </div>
+                          
+                          <div className="flex-grow min-w-0">
+                            <div className="flex justify-between items-start mb-0.5">
+                              <p className="text-xs font-bold text-primary truncate leading-none">{r.title}</p>
+                              <span className={`text-[8px] font-black px-1.5 rounded-full ${
+                                r.severity === 'Critical' ? 'bg-red-100 text-red-700' : 
+                                r.severity === 'Active' ? 'bg-orange-100 text-orange-700' : 
+                                r.severity === 'Pending' ? 'bg-blue-100 text-blue-700' : 
+                                'bg-slate-100 text-slate-700'
+                              }`}>
+                                {r.severity === 'Active' ? 'High' : 
+                                 r.severity === 'Pending' ? 'Medium' : 
+                                 r.severity === 'Scheduled' ? 'Low' : 
+                                 r.severity}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-text-secondary truncate mt-0.5">📍 {r.location}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+
+          {/* RECENTLY RESOLVED HAZARDS PANEL */}
+          <div className="bg-white rounded-xl border border-border-subtle shadow-sm flex flex-col h-[380px] overflow-hidden">
+            <div className="p-4 border-b border-border-subtle flex justify-between items-center bg-surface-bright/50">
+              <h3 className="text-xs font-bold text-primary flex items-center gap-1.5 uppercase tracking-wider">
+                Recently Resolved Hazards
+                <span className="bg-green-100 text-green-800 text-[8px] px-1.5 py-0.5 rounded-full font-black">COMPLETED</span>
+              </h3>
+              {resolvedReports.length > 0 && (
+                <button
+                  onClick={() => setShowClearConfirmation(true)}
+                  className="flex items-center gap-1 text-[10px] font-bold text-red-600 hover:text-red-700 transition-colors cursor-pointer bg-red-50 hover:bg-red-100/70 px-2.5 py-1 rounded"
+                >
+                  <Trash2 className="w-3 h-3" /> Clear All
+                </button>
+              )}
+            </div>
+
+            {/* Summary Metrics Row */}
+            <div className="grid grid-cols-3 gap-2 p-3 bg-slate-50 border-b border-border-subtle text-center">
+              <div className="bg-white p-2 rounded-lg border border-border-subtle/60">
+                <span className="text-[8.5px] font-bold text-text-secondary uppercase tracking-wider block">Resolved Today</span>
+                <span className="text-sm font-black text-green-600 block mt-0.5">{resolvedTodayCount}</span>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-border-subtle/60">
+                <span className="text-[8.5px] font-bold text-text-secondary uppercase tracking-wider block">Avg Duration</span>
+                <span className="text-sm font-black text-primary block mt-0.5">{avgResolutionTime}m</span>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-border-subtle/60">
+                <span className="text-[8.5px] font-bold text-text-secondary uppercase tracking-wider block">Success Rate</span>
+                <span className="text-sm font-black text-primary block mt-0.5">{successRate}%</span>
+              </div>
+            </div>
+
+            {/* Resolved Feed list */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+              {resolvedReports.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center text-text-secondary opacity-60">
+                  <ShieldCheck className="w-8 h-8 text-green-500 mb-1" />
+                  <p className="font-bold text-xs text-primary">No resolved hazards found.</p>
+                </div>
+              ) : (
+                resolvedReports.map((report) => (
+                  <div 
+                    key={report.id}
+                    className="p-3 bg-white border border-border-subtle/50 rounded-xl flex flex-col hover:bg-slate-50 transition-all"
+                  >
+                    <div className="flex gap-2.5">
+                      <div className="w-9 h-9 rounded-lg bg-green-50 text-green-600 border border-green-200 flex items-center justify-center flex-shrink-0">
+                        <Check className="w-4 h-4" />
+                      </div>
+                      
+                      <div className="flex-grow min-w-0">
+                        <div className="flex justify-between items-start mb-0.5">
+                          <p className="text-xs font-bold text-primary truncate leading-none">{report.title}</p>
+                          <span className="text-[8px] font-black px-1.5 rounded-full bg-green-100 text-green-700">
+                            Resolved
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-text-secondary truncate">📍 {report.location}</p>
+                        
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-2 text-[9px] font-semibold text-text-secondary border-t border-slate-100 pt-1.5">
+                          <div>
+                            <span className="text-[8px] text-text-secondary/60 block">Assigned Team</span>
+                            <span className="text-primary truncate block">{report.assignedTeam || 'Team Gamma (Rapid Response)'}</span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] text-text-secondary/60 block">Duration</span>
+                            <span className="text-primary block">{report.resolutionTime || '42 Mins'}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-center mt-1.5 pt-1.5 border-t border-slate-100/50">
+                          <span className="text-[8px] text-text-secondary/60 italic">Resolved: {report.actualCompletionDate}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
@@ -1507,6 +2333,175 @@ export function Dashboard() {
         </div>
 
       </div>
+
+      {/* Confirmation Modal */}
+      {showClearConfirmation && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200/80 max-w-sm w-full p-6 animate-fade-in-up">
+            <h4 className="text-sm font-black text-primary uppercase tracking-wide flex items-center gap-1.5 text-red-600 mb-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 animate-pulse" /> Clear Resolved History?
+            </h4>
+            <p className="text-xs text-text-secondary font-medium leading-relaxed mb-6">
+              Are you sure you want to permanently delete all resolved hazards from the system? This action cannot be undone and will update the database in real-time.
+            </p>
+            <div className="flex gap-3 justify-end text-xs font-bold">
+              <button
+                onClick={() => setShowClearConfirmation(false)}
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-text-secondary hover:text-primary transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClearAllResolved}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors cursor-pointer"
+              >
+                Confirm Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Crew Progress Update Modal */}
+      {updatingReport && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200/80 max-w-md w-full p-6 animate-fade-in-up space-y-4">
+            <div className="flex justify-between items-start border-b pb-2.5">
+              <div>
+                <h4 className="text-sm font-black text-primary uppercase tracking-wide flex items-center gap-1.5">
+                  👷 Crew Progress Report
+                </h4>
+                <p className="text-[10px] text-text-secondary mt-0.5 font-semibold">
+                  Updating: {updatingReport.title}
+                </p>
+              </div>
+              <button 
+                onClick={() => setUpdatingReport(null)}
+                className="text-text-secondary hover:text-primary font-bold text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs font-semibold text-text-secondary">
+              {/* Progress Slider */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="uppercase tracking-wider">Progress %</span>
+                  <span className="text-primary font-black bg-slate-100 px-2 py-0.5 rounded">{updateProgressVal}%</span>
+                </div>
+                <input 
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={updateProgressVal}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setUpdateProgressVal(val);
+                    if (val === 100) {
+                      setUpdateStatusVal('Awaiting Resolution');
+                    } else if (updateStatusVal === 'Awaiting Resolution') {
+                      setUpdateStatusVal('In Progress');
+                    }
+                  }}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                />
+              </div>
+
+              {/* Status Dropdown */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider block">Operational Status</span>
+                <select
+                  value={updateStatusVal}
+                  onChange={(e) => {
+                    const status = e.target.value as any;
+                    setUpdateStatusVal(status);
+                    if (status === 'Awaiting Resolution') {
+                      setUpdateProgressVal(100);
+                    } else if (updateProgressVal === 100) {
+                      setUpdateProgressVal(95);
+                    }
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none focus:border-primary transition-all"
+                >
+                  <option value="In Progress">In Progress (Active Repairing)</option>
+                  <option value="Delayed">Delayed (Issues / Blocked)</option>
+                  <option value="Awaiting Resolution">Awaiting Resolution (100% Complete)</option>
+                </select>
+              </div>
+
+              {/* ETA Input */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider block">Estimated Completion Time (ETA minutes remaining)</span>
+                <input 
+                  type="number"
+                  min="0"
+                  max="300"
+                  value={updateEtaVal}
+                  onChange={(e) => setUpdateEtaVal(Math.max(0, Number(e.target.value)))}
+                  className="w-full bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none focus:border-primary transition-all"
+                  placeholder="Minutes remaining..."
+                />
+              </div>
+
+              {/* Delay Reason (Conditional) */}
+              {(updateStatusVal === 'Delayed') && (
+                <div className="space-y-1 animate-fade-in-up">
+                  <span className="text-[10px] uppercase tracking-wider block text-red-600">Delay Reason</span>
+                  <input 
+                    type="text"
+                    value={updateDelayReason}
+                    onChange={(e) => setUpdateDelayReason(e.target.value)}
+                    className="w-full bg-red-50/20 border border-red-200 rounded-lg px-3 py-2 text-xs font-bold text-red-700 outline-none focus:border-red-500 transition-all placeholder:text-red-300"
+                    placeholder="e.g. Bad weather, equipment breakdown..."
+                    required
+                  />
+                </div>
+              )}
+
+              {/* Repair Notes */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider block">Repair Logs / Notes</span>
+                <textarea 
+                  rows={2}
+                  value={updateNotes}
+                  onChange={(e) => setUpdateNotes(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 text-xs font-semibold text-primary outline-none focus:border-primary transition-all placeholder:text-slate-400"
+                  placeholder="Describe material status, compaction results, etc."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end text-xs font-bold pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setUpdatingReport(null)}
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-text-secondary hover:text-primary transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const updates: Partial<Report> = {
+                    progress: updateProgressVal,
+                    etaMinutes: updateEtaVal,
+                    status: updateStatusVal,
+                    delayReason: updateStatusVal === 'Delayed' ? updateDelayReason : undefined,
+                    repairNotes: updateNotes
+                  };
+
+                  updateReportStatus(updatingReport.id, updates);
+                  showToast(`Crew report updated for: ${updatingReport.title}`, 'success');
+                  setUpdatingReport(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-black text-white transition-colors cursor-pointer"
+              >
+                Submit Updates
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -269,6 +269,22 @@ export async function addDocument(colRef: any, data: any) {
     const newDoc = { ...data, id };
     current.unshift(newDoc);
     saveLocalStorageData(storageKey, current);
+
+    // Sync to Express Backend
+    if (path === 'hazards') {
+      fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDoc)
+      }).catch(err => console.error('Failed to sync report creation to backend:', err));
+    } else if (path === 'complaints') {
+      fetch('/api/complaints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDoc)
+      }).catch(err => console.error('Failed to sync complaint creation to backend:', err));
+    }
+
     return newDoc;
   }
 }
@@ -291,6 +307,38 @@ export async function setDocument(docRef: any, data: any) {
       current.push({ id, ...data });
     }
     saveLocalStorageData(storageKey, current);
+
+    // Sync to Express Backend
+    if (path === 'hazards') {
+      fetch(`/api/reports/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(res => {
+        if (res.status === 404) {
+          return fetch('/api/reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...data, id })
+          });
+        }
+      }).catch(err => console.error('Failed to sync setDocument to backend:', err));
+    } else if (path === 'complaints') {
+      fetch(`/api/complaints/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(res => {
+        if (res.status === 404) {
+          return fetch('/api/complaints', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...data, id })
+          });
+        }
+      }).catch(err => console.error('Failed to sync setDocument complaint to backend:', err));
+    }
+
     return data;
   }
 }
@@ -309,6 +357,47 @@ export async function updateDocument(docRef: any, data: any) {
     if (index > -1) {
       current[index] = { ...current[index], ...data };
       saveLocalStorageData(storageKey, current);
+
+      // Sync to Express Backend
+      if (path === 'hazards') {
+        const backup = { ...current[index] };
+        fetch(`/api/reports/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        }).then(res => {
+          if (!res.ok) throw new Error('API update failed');
+        }).catch(err => {
+          console.error('Failed to sync update to backend, rolling back:', err);
+          const freshCurrent = getLocalStorageData(storageKey);
+          const freshIndex = freshCurrent.findIndex(item => item.id === id);
+          if (freshIndex > -1) {
+            // Restore previous state without the failed update keys
+            freshCurrent[freshIndex] = { ...freshCurrent[freshIndex], ...backup };
+            saveLocalStorageData(storageKey, freshCurrent);
+            window.dispatchEvent(new Event('roadwatch-reports-updated'));
+          }
+        });
+      } else if (path === 'complaints') {
+        const backup = { ...current[index] };
+        fetch(`/api/complaints/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        }).then(res => {
+          if (!res.ok) throw new Error('API update failed');
+        }).catch(err => {
+          console.error('Failed to sync complaint update to backend, rolling back:', err);
+          const freshCurrent = getLocalStorageData(storageKey);
+          const freshIndex = freshCurrent.findIndex(item => item.id === id);
+          if (freshIndex > -1) {
+            freshCurrent[freshIndex] = { ...freshCurrent[freshIndex], ...backup };
+            saveLocalStorageData(storageKey, freshCurrent);
+            window.dispatchEvent(new Event('roadwatch-complaints-updated'));
+          }
+        });
+      }
+
       return current[index];
     }
     throw new Error(`Document ${id} not found in mock store ${path}`);
@@ -327,6 +416,17 @@ export async function deleteDocument(docRef: any) {
     const current = getLocalStorageData(storageKey);
     const filtered = current.filter(item => item.id !== id);
     saveLocalStorageData(storageKey, filtered);
+
+    // Sync to Express Backend
+    if (path === 'hazards') {
+      fetch(`/api/reports/${id}`, {
+        method: 'DELETE'
+      }).catch(err => console.error('Failed to sync delete to backend:', err));
+    } else if (path === 'complaints') {
+      fetch(`/api/complaints/${id}`, {
+        method: 'DELETE'
+      }).catch(err => console.error('Failed to sync complaint delete to backend:', err));
+    }
   }
 }
 

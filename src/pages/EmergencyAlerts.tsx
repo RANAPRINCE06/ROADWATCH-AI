@@ -5,6 +5,7 @@ import {
   acknowledgeAlert,
   resolveReport as storageResolveReport, 
   addReport as storageAddReport, 
+  addComplaint,
   deleteReport,
   Report,
   AlertItem as StorageAlertItem
@@ -62,18 +63,17 @@ export function EmergencyAlerts() {
 
     const template = simulationTemplates[Math.floor(Math.random() * simulationTemplates.length)];
     
-    storageAddReport({
-      title: template.title,
-      location: template.location,
-      severity: template.severity,
-      icon: template.icon,
-      source: 'AI Edge Node',
-      x: Math.floor(Math.random() * 60) + 20,
-      y: Math.floor(Math.random() * 60) + 20,
+    addComplaint({
+      title: `${template.title} [DEMO DATA]`,
+      description: `${template.description} [DEMO DATA]`,
+      locationName: template.location,
+      priority: template.severity === 'Critical' ? ('Critical' as const) : ('High' as const),
+      hazardType: template.icon === 'droplets' ? 'Waterlogging' : 'Road Blockage',
+      imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
       lat: 1.2847 + (Math.random() - 0.5) * 0.02,
       lng: 103.8590 + (Math.random() - 0.5) * 0.02,
-      imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
-      description: template.description
+      x: Math.floor(Math.random() * 60) + 20,
+      y: Math.floor(Math.random() * 60) + 20
     });
   };
 

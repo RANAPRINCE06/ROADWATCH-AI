@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { addReport } from '../utils/storage';
+import { addComplaint } from '../utils/storage';
 import {
   UploadCloud,
   Camera,
@@ -637,23 +637,22 @@ If 'isRoadHazardImage' is false, populate the remaining fields with default valu
     // Determine the source: AI-assisted upload or simple citizen submission
     const source = imageSrc ? 'AI Detected (Citizen)' : 'Citizen Report';
 
-    const newReport = {
+    const newComplaint = {
       title: category,
-      location: locationName || 'San Francisco, CA',
-      severity,
-      icon,
-      source,
-      x: Math.floor(Math.random() * 60) + 20,
-      y: Math.floor(Math.random() * 60) + 20,
+      description: aiResult?.description || `Reported ${category} hazard.`,
+      locationName: locationName || 'Singapore',
+      imageUrl,
       lat,
       lng,
-      imageUrl,
-      description: aiResult?.description || `Reported ${category} hazard.`,
+      x: Math.floor(Math.random() * 60) + 20,
+      y: Math.floor(Math.random() * 60) + 20,
+      priority: severity === 'Critical' ? ('Critical' as const) : severity === 'Active' ? ('High' as const) : severity === 'Pending' ? ('Medium' as const) : ('Low' as const),
+      hazardType: category
     };
 
     setTimeout(() => {
       try {
-        addReport(newReport);
+        addComplaint(newComplaint);
       } catch (err) {
         console.error('Failed to save citizen report:', err);
       }

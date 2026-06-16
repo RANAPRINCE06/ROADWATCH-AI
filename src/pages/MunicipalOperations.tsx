@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { 
   UploadCloud, 
@@ -27,7 +28,10 @@ import {
   upvoteComplaint, 
   verifyComplaint, 
   updateComplaintStatus,
-  CitizenComplaint 
+  CitizenComplaint,
+  Report,
+  getReports,
+  updateReportStatus
 } from '../utils/storage';
 import {
   getCollectionRef,
@@ -161,14 +165,27 @@ const getTimeSince = (dateStr: string) => {
 export function MunicipalOperations() {
   const [lang, setLang] = useState<'en' | 'zh' | 'ms' | 'ta'>('en');
   const [complaints, setComplaints] = useState<CitizenComplaint[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
   
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
   const [locName, setLocName] = useState('');
   
   const [selectedCompId, setSelectedCompId] = useState<string>('');
+  const [selectedReportId, setSelectedReportId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Selected team for each report card during assignment overrides
+  const [selectedTeams, setSelectedTeams] = useState<Record<string, string>>({});
+
+  // Crew Progress Update Modal States
+  const [updatingReport, setUpdatingReport] = useState<Report | null>(null);
+  const [updateProgressVal, setUpdateProgressVal] = useState<number>(0);
+  const [updateEtaVal, setUpdateEtaVal] = useState<number>(0);
+  const [updateStatusVal, setUpdateStatusVal] = useState<'In Progress' | 'Delayed' | 'Awaiting Resolution'>('In Progress');
+  const [updateDelayReason, setUpdateDelayReason] = useState<string>('');
+  const [updateNotes, setUpdateNotes] = useState<string>('');
 
   const location = useLocation();
 
@@ -217,7 +234,32 @@ export function MunicipalOperations() {
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [selectedCompId]);
+
+  // Prevent background page scrolling when modal is open
+  useEffect(() => {
+    if (updatingReport) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [updatingReport]);
+
+  // Listen to hazards (reports) in real-time
+  useEffect(() => {
+    const colRef = getCollectionRef('hazards');
+    const q = buildQuery(colRef, queryOrderBy('createdAt', 'desc'));
+    const unsubscribe = subscribeToQuery(q, (data) => {
+      setReports(data);
+      if (data.length > 0 && !selectedReportId) {
+        setSelectedReportId(data[0].id);
+      }
+    });
+    return () => unsubscribe();
+  }, [selectedReportId]);
 
   // Listen to notifications in real-time
   useEffect(() => {
@@ -408,82 +450,89 @@ export function MunicipalOperations() {
   };
 
   // Admin Actions
-  const handleUpdatePriority = (compId: string, newPriority: 'Critical' | 'High' | 'Medium' | 'Low') => {
+  const handleUpdatePriority = (reportId: string, newPriority: 'Critical' | 'High' | 'Medium' | 'Low') => {
     const weights = { 'Critical': 95, 'High': 80, 'Medium': 55, 'Low': 30 };
     const score = weights[newPriority];
-    updateDocument(getDocRef('complaints', compId), { priority: newPriority, priorityScore: score });
-    updateDocument(getDocRef('reports', `rep-from-${compId}`), { 
-      severity: (newPriority === 'Critical' ? 'Critical' : newPriority === 'High' ? 'Active' : newPriority === 'Medium' ? 'Pending' : 'Scheduled'),
-      priorityScore: score
-    });
+    const severity = newPriority === 'Critical' ? 'Critical' : newPriority === 'High' ? 'Active' : newPriority === 'Medium' ? 'Pending' : 'Scheduled';
+    
+    updateReportStatus(reportId, { severity, priorityScore: score });
+
+    // Sync to complaint if applicable
+    if (reportId.startsWith('rep-from-comp-')) {
+      const complaintId = reportId.replace('rep-from-', '');
+      updateDocument(getDocRef('complaints', complaintId), { priority: newPriority, priorityScore: score });
+    }
+
     setSuccessMsg(`Incident priority updated to ${newPriority}.`);
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
-  const handleAddNotes = (compId: string, noteText: string) => {
+  const handleAddNotes = (reportId: string, noteText: string) => {
     if (!noteText.trim()) return;
-    const complaint = complaints.find(c => c.id === compId);
-    if (!complaint) return;
+    const report = reports.find(r => r.id === reportId);
+    if (!report) return;
 
-    const currentNotes = (complaint as any).notes || '';
+    const currentNotes = report.repairNotes || '';
     const newNotes = currentNotes ? `${currentNotes}\n[Admin Note]: ${noteText}` : `[Admin Note]: ${noteText}`;
     
-    updateDocument(getDocRef('complaints', compId), { notes: newNotes });
-    updateDocument(getDocRef('reports', `rep-from-${compId}`), { repairNotes: newNotes });
+    updateReportStatus(reportId, { repairNotes: newNotes });
+
+    // Sync to complaint if applicable
+    if (reportId.startsWith('rep-from-comp-')) {
+      const complaintId = reportId.replace('rep-from-', '');
+      updateDocument(getDocRef('complaints', complaintId), { notes: newNotes });
+    }
+
     setSuccessMsg("Admin note appended successfully.");
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
-  const handleAdminStatusChange = (compId: string, status: CitizenComplaint['status'], teamName?: string) => {
-    const complaint = complaints.find(c => c.id === compId);
-    if (!complaint) return;
+  const handleAdminStatusChange = (reportId: string, status: Report['status'], teamName?: string) => {
+    const report = reports.find(r => r.id === reportId);
+    if (!report) return;
 
-    const updates: any = { status };
+    const updates: Partial<Report> = { status };
     if (teamName) updates.assignedTeam = teamName;
-    if (status === 'Resolved') updates.resolvedAt = new Date().toISOString();
-
-    updateDocument(getDocRef('complaints', compId), updates);
-
-    // Sync to report
-    const reportId = `rep-from-${compId}`;
-    let reportStatus: any = 'Detected';
-    if (status === 'Resolved') reportStatus = 'Resolved';
-    else if (status === 'Repairing' || status === 'Repair In Progress') reportStatus = 'Repairing';
-    else if (status === 'Assigned') reportStatus = 'Assigned';
-    else if (status === 'Verified') reportStatus = 'Verified';
-    else if (status === 'Submitted') reportStatus = 'Detected';
-    else if (status === 'Closed') reportStatus = 'Resolved';
-
-    const reportUpdates: any = { status: reportStatus };
-    if (teamName) reportUpdates.assignedTeam = teamName;
-    if (status === 'Closed') reportUpdates.resolved = true;
-    if (status === 'Resolved') {
+    if (status === 'Resolved' || status === 'Completed') {
       const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      reportUpdates.resolved = true;
-      reportUpdates.actualCompletionDate = todayStr;
-      reportUpdates.repairDate = todayStr;
+      updates.resolved = true;
+      updates.actualCompletionDate = todayStr;
+      updates.repairDate = todayStr;
     }
 
-    updateDocument(getDocRef('reports', reportId), reportUpdates);
+    updateReportStatus(reportId, updates);
+
+    // Sync back to corresponding CitizenComplaint
+    if (reportId.startsWith('rep-from-comp-')) {
+      const complaintId = reportId.replace('rep-from-', '');
+      let compStatus: CitizenComplaint['status'] = 'Submitted';
+      if (status === 'Resolved' || status === 'Completed') compStatus = 'Resolved';
+      else if (status === 'Repairing' || status === 'In Progress') compStatus = 'Repair In Progress';
+      else if (status === 'Assigned') compStatus = 'Assigned';
+      else if (status === 'Verified') compStatus = 'Verified';
+      else if (status === 'Detected') compStatus = 'Submitted';
+      else if ((status as any) === 'Closed') compStatus = 'Closed';
+
+      const compUpdates: any = { status: compStatus };
+      if (teamName) compUpdates.assignedTeam = teamName;
+      updateDocument(getDocRef('complaints', complaintId), compUpdates);
+    }
 
     // Generate notifications
     let notifTitle = '';
     let notifMessage = '';
     if (status === 'Verified') {
       notifTitle = 'Complaint Verified';
-      notifMessage = `AI and municipal engineers have verified your complaint "${complaint.title}".`;
+      notifMessage = `AI and municipal engineers have verified your complaint "${report.title}".`;
     } else if (status === 'Assigned') {
       notifTitle = 'Team Assigned';
-      notifMessage = `Municipal team has been assigned to fix "${complaint.title}".`;
-    } else if (status === 'Repairing') {
+      notifMessage = `Municipal team has been assigned to fix "${report.title}".`;
+    } else if (status === 'Repairing' || status === 'In Progress') {
       notifTitle = 'Repair Started';
-      notifMessage = `Crew has arrived on-site. Repairs are now active for "${complaint.title}".`;
-    } else if (status === 'Resolved') {
+      notifMessage = `Crew has arrived on-site. Repairs are now active for "${report.title}".`;
+    } else if (status === 'Resolved' || status === 'Completed') {
       notifTitle = 'Repair Completed';
-      notifMessage = `Repairs have been completed for "${complaint.title}". Please verify the work.`;
-    } else if (status === 'Closed') {
-      notifTitle = 'Complaint Closed';
-      notifMessage = `Resolution has been verified by citizen. The incident is now officially closed.`;
+      notifMessage = `Repairs have been completed for "${report.title}". Please verify the work.`;
     }
 
     if (notifTitle) {
@@ -495,25 +544,53 @@ export function MunicipalOperations() {
         citizenId: 'citizen_demo'
       });
     }
+
+    setSuccessMsg(`Incident updated successfully.`);
+    setTimeout(() => setSuccessMsg(null), 3000);
   };
 
-  const selectedComplaint = complaints.find(c => c.id === selectedCompId) || complaints[0];
+  const selectedReport = reports.find(r => r.id === selectedReportId) || reports[0];
+  const selectedComplaint = complaints.find(c => c.id === selectedCompId || (selectedReport && selectedReport.id.startsWith('rep-from-comp-') && c.id === selectedReport.id.replace('rep-from-', ''))) || complaints[0];
+
+  const getTeamDispatchesCount = (reportsList: Report[], teamName: string) => {
+    return reportsList.filter(r => 
+      r.assignedTeam === teamName && 
+      !r.resolved && 
+      r.status !== 'Resolved' && 
+      r.status !== 'Completed' && 
+      (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+    ).length;
+  };
+
+  const getAiRecommendation = (reportsList: Report[]) => {
+    const teams = ['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'];
+    const activeDispatches = {
+      'Team Alpha': getTeamDispatchesCount(reportsList, 'Team Alpha'),
+      'Team Bravo': getTeamDispatchesCount(reportsList, 'Team Bravo'),
+      'Team Charlie': getTeamDispatchesCount(reportsList, 'Team Charlie'),
+      'Team Delta': getTeamDispatchesCount(reportsList, 'Team Delta'),
+    };
+    const sortedTeams = [...teams].sort(
+      (a, b) => activeDispatches[a as keyof typeof activeDispatches] - activeDispatches[b as keyof typeof activeDispatches]
+    );
+    return sortedTeams[0];
+  };
 
   // Resolution stats
-  const totalFiled = complaints.length;
-  const verifiedCount = complaints.filter(c => c.status !== 'Submitted').length;
-  const resolvedCount = complaints.filter(c => c.status === 'Resolved' || c.status === 'Closed').length;
-  const activeCount = complaints.filter(c => c.status !== 'Closed').length;
+  const totalFiled = reports.length;
+  const verifiedCount = reports.filter(r => r.status !== 'Detected').length;
+  const resolvedCount = reports.filter(r => r.status === 'Resolved' || r.status === 'Completed' || r.resolved).length;
+  const activeCount = reports.filter(r => r.status !== 'Resolved' && r.status !== 'Completed' && !r.resolved).length;
 
   let avgTime = '35m';
-  const resolvedList = complaints.filter(c => c.status === 'Resolved' || c.status === 'Closed');
+  const resolvedList = reports.filter(r => r.status === 'Resolved' || r.status === 'Completed' || r.resolved);
   if (resolvedList.length > 0) {
     let totalMs = 0;
     let count = 0;
-    resolvedList.forEach(c => {
-      if (c.timestamp) {
-        const start = new Date(c.timestamp).getTime();
-        const end = c.resolvedAt ? new Date(c.resolvedAt).getTime() : (start + 42 * 60 * 1000);
+    resolvedList.forEach(r => {
+      if (r.timestamp) {
+        const start = new Date(r.timestamp).getTime();
+        const end = r.resolvedAt ? new Date(r.resolvedAt).getTime() : (start + 42 * 60 * 1000);
         totalMs += (end - start);
         count++;
       }
@@ -526,20 +603,26 @@ export function MunicipalOperations() {
 
   const getWorkflowStepClass = (currentStatus: string, step: string) => {
     const order = ['Submitted', 'Verified', 'Assigned', 'Repairing', 'Resolved', 'Closed'];
-    const currentNorm = currentStatus === 'Repair In Progress' ? 'Repairing' : currentStatus;
-    const currentIndex = order.indexOf(currentNorm);
+    let normStatus = 'Submitted';
+    if (currentStatus === 'Verified') normStatus = 'Verified';
+    else if (currentStatus === 'Assigned') normStatus = 'Assigned';
+    else if (['Repairing', 'Repair In Progress', 'In Progress', 'Delayed', 'Awaiting Resolution'].includes(currentStatus)) normStatus = 'Repairing';
+    else if (currentStatus === 'Resolved' || currentStatus === 'Completed') normStatus = 'Resolved';
+    else if (currentStatus === 'Closed') normStatus = 'Closed';
+
+    const currentIndex = order.indexOf(normStatus);
     const stepIndex = order.indexOf(step);
 
     if (currentIndex >= stepIndex) {
       if (currentStatus === 'Closed') return 'bg-slate-700 border-slate-800 text-white';
-      if (currentStatus === 'Resolved') return 'bg-green-600 border-green-500 text-white';
+      if (currentStatus === 'Resolved' || currentStatus === 'Completed') return 'bg-green-600 border-green-500 text-white';
       if (step === 'Repairing') return 'bg-purple-600 border-purple-500 text-white';
       return 'bg-primary border-primary text-white';
     }
     return 'bg-slate-100 border-slate-200 text-slate-400';
   };
 
-  // Search & Filters logic
+  // Search & Filters logic for citizen complaints (remains for compatibility)
   const filteredComplaints = complaints.filter(comp => {
     if (searchQuery.trim() !== '') {
       const q = searchQuery.toLowerCase();
@@ -548,12 +631,10 @@ export function MunicipalOperations() {
       const matchesId = comp.id?.toLowerCase().includes(q);
       if (!matchesTitle && !matchesLoc && !matchesId) return false;
     }
-
     if (statusFilter !== 'All') {
       if (statusFilter === 'Repairing' && (comp.status === 'Repairing' || comp.status === 'Repair In Progress')) return true;
       if (comp.status !== statusFilter) return false;
     }
-
     return true;
   });
 
@@ -566,8 +647,40 @@ export function MunicipalOperations() {
     }
     if (sortBy === 'priority') {
       const weights = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
-      const weightA = weights[a.priority || 'Medium'] || 0;
-      const weightB = weights[b.priority || 'Medium'] || 0;
+      return (weights[b.priority || 'Medium'] || 0) - (weights[a.priority || 'Medium'] || 0);
+    }
+    return 0;
+  });
+
+  // Search & Filters logic for reports (hazards)
+  const filteredReports = reports.filter(r => {
+    if (searchQuery.trim() !== '') {
+      const q = searchQuery.toLowerCase();
+      const matchesTitle = r.title?.toLowerCase().includes(q);
+      const matchesLoc = r.location?.toLowerCase().includes(q);
+      const matchesId = r.id?.toLowerCase().includes(q);
+      if (!matchesTitle && !matchesLoc && !matchesId) return false;
+    }
+
+    if (statusFilter !== 'All') {
+      if (statusFilter === 'Repairing' && (r.status === 'Repairing' || r.status === 'In Progress' || r.status === 'Repair In Progress')) return true;
+      if (r.status !== statusFilter) return false;
+    }
+
+    return true;
+  });
+
+  const sortedReports = [...filteredReports].sort((a, b) => {
+    if (sortBy === 'newest') {
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    }
+    if (sortBy === 'oldest') {
+      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    }
+    if (sortBy === 'priority') {
+      const weights = { 'Critical': 4, 'Active': 3, 'Pending': 2, 'Scheduled': 1 };
+      const weightA = weights[a.severity || 'Pending'] || 0;
+      const weightB = weights[b.severity || 'Pending'] || 0;
       return weightB - weightA;
     }
     return 0;
@@ -798,31 +911,34 @@ export function MunicipalOperations() {
                   <Clock className="w-4.5 h-4.5 text-primary" /> Operations Center - Active Incidents
                 </span>
                 <span className="bg-red-50 text-red-600 border border-red-200 text-[8px] font-black px-2 py-0.5 rounded-full animate-pulse">
-                  {complaints.filter(c => c.status !== 'Closed').length} Active
+                  {reports.filter(r => r.status !== 'Resolved' && r.status !== 'Completed' && !r.resolved).length} Active
                 </span>
               </h3>
 
               {/* Active Incident Tracker Cards */}
               <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1 custom-scrollbar">
-                {sortedComplaints.length === 0 ? (
+                {sortedReports.length === 0 ? (
                   <div className="text-[10px] text-text-secondary text-center py-12 font-semibold bg-slate-50 rounded-lg border border-dashed border-border-subtle">
                     No active dispatches on grid.
                   </div>
                 ) : (
-                  sortedComplaints.map(comp => {
-                    const badge = getStatusBadge(comp.status);
+                  sortedReports.map(report => {
+                    const badge = getStatusBadge(report.status || 'Detected');
+                    const isSelected = selectedReportId === report.id;
+                    const aiRec = getAiRecommendation(reports);
+
                     return (
                       <div 
-                        key={comp.id} 
+                        key={report.id} 
                         className={`p-4 rounded-xl border transition-all ${
-                          selectedCompId === comp.id ? 'bg-slate-50 border-primary shadow-md scale-[1.01]' : 'bg-white border-border-subtle hover:bg-slate-50/50'
+                          isSelected ? 'bg-slate-50 border-primary shadow-md scale-[1.01]' : 'bg-white border-border-subtle hover:bg-slate-50/50'
                         }`}
                       >
                         <div className="flex justify-between items-start mb-2.5">
                           <div className="min-w-0 flex-1 pr-2">
-                            <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest block">{comp.id}</span>
-                            <h4 className="font-bold text-xs text-primary mt-0.5 leading-snug truncate">{comp.title}</h4>
-                            <span className="text-[9px] text-text-secondary block mt-0.5 truncate">📍 {comp.locationName || comp.location}</span>
+                            <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest block">{report.id}</span>
+                            <h4 className="font-bold text-xs text-primary mt-0.5 leading-snug truncate">{report.title}</h4>
+                            <span className="text-[9px] text-text-secondary block mt-0.5 truncate">📍 {report.location}</span>
                           </div>
                           <span className={`text-[8px] font-black px-2 py-0.5 rounded-full border shrink-0 ${badge.color}`}>
                             {badge.icon} {badge.text}
@@ -833,85 +949,138 @@ export function MunicipalOperations() {
                           <div>
                             <span className="text-[8px] block font-medium opacity-70">Severity & Score:</span>
                             <span className="text-primary font-bold">
-                              {comp.priority || 'Medium'} ({comp.priorityScore || 50}/100)
+                              {report.severity || 'Pending'} ({report.priorityScore || 50}/100)
                             </span>
                           </div>
                           <div>
                             <span className="text-[8px] block font-medium opacity-70">Assigned Team:</span>
-                            <span className="text-primary font-bold">{comp.assignedTeam || 'None Assigned'}</span>
+                            <span className="text-primary font-bold">{report.assignedTeam || 'None Assigned'}</span>
                           </div>
                           <div>
                             <span className="text-[8px] block font-medium opacity-70">Time Since Reported:</span>
-                            <span className="text-primary font-bold">{getTimeSince(comp.timestamp || comp.createdAt)}</span>
+                            <span className="text-primary font-bold">{getTimeSince(report.timestamp)}</span>
                           </div>
                           <div>
                             <span className="text-[8px] block font-medium opacity-70">Est. Completion:</span>
                             <span className="text-primary font-bold">
-                              {new Date(new Date(comp.timestamp || comp.createdAt).getTime() + (comp.priority === 'Critical' ? 1 : comp.priority === 'High' ? 3 : 7) * 24 * 60 * 60 * 1000).toLocaleDateString()}
+                              {new Date(new Date(report.timestamp).getTime() + (report.severity === 'Critical' ? 1 : report.severity === 'Active' ? 3 : 7) * 24 * 60 * 60 * 1000).toLocaleDateString()}
                             </span>
                           </div>
                         </div>
 
                         {/* Admin Action Buttons */}
-                        <div className="flex gap-1.5 flex-wrap">
+                        <div className="flex gap-1.5 flex-wrap items-center mt-2.5">
                           <button
                             type="button"
-                            onClick={() => setSelectedCompId(comp.id)}
+                            onClick={() => {
+                              setSelectedReportId(report.id);
+                              if (report.id.startsWith('rep-from-comp-')) {
+                                setSelectedCompId(report.id.replace('rep-from-', ''));
+                              } else {
+                                setSelectedCompId('');
+                              }
+                            }}
                             className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-text-secondary hover:text-primary rounded text-[9px] font-bold cursor-pointer transition-colors"
                           >
                             View Details
                           </button>
 
-                          {comp.status === 'Submitted' && (
+                          {(report.status === 'Detected' || report.status === 'Submitted') && (
                             <button
                               type="button"
-                              onClick={() => handleAdminStatusChange(comp.id, 'Verified')}
+                              onClick={() => handleAdminStatusChange(report.id, 'Verified')}
                               className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
                             >
                               Verify Incident
                             </button>
                           )}
 
-                          {comp.status === 'Verified' && (
+                          {report.status === 'Verified' && (
                             <button
                               type="button"
-                              onClick={() => handleAdminStatusChange(comp.id, 'Assigned', 'Team Gamma (Rapid Response)')}
+                              onClick={() => handleAdminStatusChange(report.id, 'Assigned', aiRec)}
                               className="px-2.5 py-1.5 bg-safety-yellow text-primary hover:opacity-90 rounded text-[9px] font-black cursor-pointer transition-colors ml-auto shadow-sm"
                             >
                               Assign Team
                             </button>
                           )}
 
-                          {comp.status === 'Assigned' && (
+                          {report.status === 'Assigned' && (
                             <button
                               type="button"
-                              onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
+                              onClick={() => handleAdminStatusChange(report.id, 'Repairing')}
                               className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
                             >
                               Start Repair
                             </button>
                           )}
 
-                          {(comp.status === 'Repairing' || comp.status === 'Repair In Progress') && (
-                            <button
-                              type="button"
-                              onClick={() => handleAdminStatusChange(comp.id, 'Resolved')}
-                              className="px-2.5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
-                            >
-                              Resolve
-                            </button>
+                          {['Repairing', 'Repair In Progress', 'In Progress', 'Delayed', 'Awaiting Resolution'].includes(report.status || '') && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUpdatingReport(report);
+                                  setUpdateProgressVal(report.progress || 0);
+                                  setUpdateEtaVal(report.etaMinutes || 0);
+                                  setUpdateStatusVal((report.status === 'Repairing' || report.status === 'Repair In Progress') ? 'In Progress' : (report.status === 'Delayed' ? 'Delayed' : 'Awaiting Resolution') as any);
+                                  setUpdateDelayReason(report.delayReason || '');
+                                  setUpdateNotes(report.repairNotes || '');
+                                }}
+                                className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto shadow-sm"
+                              >
+                                Update Progress
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAdminStatusChange(report.id, 'Resolved')}
+                                className="px-2.5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-[9px] font-bold cursor-pointer transition-colors shadow-sm"
+                              >
+                                Resolve
+                              </button>
+                            </>
                           )}
 
-                          {(comp.status === 'Resolved' || comp.status === 'Closed') && (
+                          {(report.status === 'Resolved' || report.status === 'Completed' || report.status === 'Closed') && (
                             <button
                               type="button"
-                              onClick={() => handleAdminStatusChange(comp.id, 'Repairing')}
+                              onClick={() => handleAdminStatusChange(report.id, 'Repairing')}
                               className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[9px] font-bold cursor-pointer transition-colors ml-auto border border-red-200 shadow-sm"
                             >
                               Reopen
                             </button>
                           )}
                         </div>
+
+                        {/* Interactive Assign Team Selection Panel */}
+                        {(report.status === 'Verified' || report.status === 'Queued') && (
+                          <div className="flex flex-col gap-1.5 w-full mt-2.5 pt-2.5 border-t border-slate-100/50">
+                            <div className="flex justify-between items-center text-[8.5px] text-text-secondary">
+                              <span>Workload Dist. (AI Rec: <strong className="text-purple-600">{aiRec}</strong>)</span>
+                              <span>Capacity Limit: 2 Tasks</span>
+                            </div>
+                            <div className="flex gap-1.5 items-center">
+                              <select
+                                value={selectedTeams[report.id] || ''}
+                                onChange={(e) => setSelectedTeams(prev => ({ ...prev, [report.id]: e.target.value }))}
+                                className="bg-slate-50 border border-slate-200/60 rounded px-1.5 py-1 text-[8.5px] font-bold text-text-secondary outline-none min-w-0 flex-1 cursor-pointer"
+                              >
+                                <option value="">AI Rec ({aiRec})</option>
+                                <option value="Team Alpha">Team Alpha (Active: {getTeamDispatchesCount(reports, 'Team Alpha')}/2)</option>
+                                <option value="Team Bravo">Team Bravo (Active: {getTeamDispatchesCount(reports, 'Team Bravo')}/2)</option>
+                                <option value="Team Charlie">Team Charlie (Active: {getTeamDispatchesCount(reports, 'Team Charlie')}/2)</option>
+                                <option value="Team Delta">Team Delta (Active: {getTeamDispatchesCount(reports, 'Team Delta')}/2)</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => handleAdminStatusChange(report.id, 'Assigned', selectedTeams[report.id] || aiRec)}
+                                className="px-2.5 py-1 bg-slate-900 text-white hover:bg-black font-bold rounded text-[8.5px] cursor-pointer transition-all shadow-sm"
+                              >
+                                Dispatch
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -952,28 +1121,28 @@ export function MunicipalOperations() {
           </div>
 
           {/* Workflow progress timeline */}
-          {selectedComplaint && (
-            <div className="bg-white p-6 rounded-xl border border-border-subtle shadow-sm space-y-5">
+          {selectedReport && (
+            <div className="bg-white p-6 rounded-xl border border-border-subtle shadow-sm space-y-5 animate-fade-in-up">
               <div className="border-b border-border-subtle/50 pb-3 flex justify-between items-start gap-4">
                 <div>
                   <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest">Incident Detailed Tracking</span>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <span className="text-[9px] font-bold text-text-secondary bg-slate-100 px-1.5 py-0.5 rounded border">{selectedComplaint.id}</span>
-                    <h4 className="font-bold text-sm text-primary leading-snug">{selectedComplaint.title}</h4>
+                    <span className="text-[9px] font-bold text-text-secondary bg-slate-100 px-1.5 py-0.5 rounded border">{selectedReport.id}</span>
+                    <h4 className="font-bold text-sm text-primary leading-snug">{selectedReport.title}</h4>
                     <span className={`text-[8px] font-black px-1.5 py-0.2 rounded-full ${
-                      selectedComplaint.priority === 'Critical' ? 'bg-red-100 text-red-700' :
-                      selectedComplaint.priority === 'High' ? 'bg-orange-100 text-orange-700' :
-                      selectedComplaint.priority === 'Medium' ? 'bg-blue-100 text-blue-700' :
+                      selectedReport.severity === 'Critical' ? 'bg-red-100 text-red-700' :
+                      selectedReport.severity === 'Active' ? 'bg-orange-100 text-orange-700' :
+                      selectedReport.severity === 'Pending' ? 'bg-blue-100 text-blue-700' :
                       'bg-slate-100 text-slate-700'
                     }`}>
-                      {selectedComplaint.priority || 'Medium'}
+                      {selectedReport.severity || 'Pending'}
                     </span>
                   </div>
-                  <p className="text-[10px] text-text-secondary mt-1">📍 {selectedComplaint.locationName || selectedComplaint.location}</p>
+                  <p className="text-[10px] text-text-secondary mt-1">📍 {selectedReport.location}</p>
                 </div>
-                {selectedComplaint.imageUrl && (
+                {selectedReport.imageUrl && (
                   <img 
-                    src={selectedComplaint.imageUrl} 
+                    src={selectedReport.imageUrl} 
                     alt="Complaint thumbnail" 
                     className="w-12 h-12 rounded object-cover border border-border-subtle"
                   />
@@ -985,68 +1154,72 @@ export function MunicipalOperations() {
                 <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-slate-200"></div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Submitted')}`}>
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedReport.status || 'Detected', 'Submitted')}`}>
                     ✓
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 1: Submitted</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">Complaint received by municipal central database.</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5 font-semibold">Complaint received by municipal central database.</p>
                   </div>
                 </div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Verified')}`}>
-                    {['Verified', 'Assigned', 'Repairing', 'Repair In Progress', 'Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '2'}
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedReport.status || 'Detected', 'Verified')}`}>
+                    {['Verified', 'Assigned', 'Repairing', 'Repair In Progress', 'In Progress', 'Delayed', 'Awaiting Resolution', 'Resolved', 'Completed', 'Closed'].includes(selectedReport.status || '') ? '✓' : '2'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 2: Verified</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">AI Computer Vision matches citizen upload logs.</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5 font-semibold">AI Computer Vision matches citizen upload logs.</p>
                   </div>
                 </div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Assigned')}`}>
-                    {['Assigned', 'Repairing', 'Repair In Progress', 'Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '3'}
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedReport.status || 'Detected', 'Assigned')}`}>
+                    {['Assigned', 'Repairing', 'Repair In Progress', 'In Progress', 'Delayed', 'Awaiting Resolution', 'Resolved', 'Completed', 'Closed'].includes(selectedReport.status || '') ? '✓' : '3'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 3: Assigned</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">Assigned to Sector Maintenance Crew: <span className="text-blue-600 font-bold">{selectedComplaint.assignedTeam || 'Team Gamma (Rapid Response)'}</span></p>
+                    <p className="text-[10px] text-text-secondary mt-0.5 font-semibold">Assigned to Sector Maintenance Crew: <span className="text-blue-600 font-bold">{selectedReport.assignedTeam || 'None Assigned'}</span></p>
                   </div>
                 </div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Repairing')}`}>
-                    {['Repairing', 'Repair In Progress', 'Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '4'}
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedReport.status || 'Detected', 'Repairing')}`}>
+                    {['Repairing', 'Repair In Progress', 'In Progress', 'Delayed', 'Awaiting Resolution', 'Resolved', 'Completed', 'Closed'].includes(selectedReport.status || '') ? '✓' : '4'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 4: Repair In Progress</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">Crew deployed on field. Paving works active.</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5 font-semibold">
+                      Crew deployed on field. Paving works active. 
+                      {selectedReport.progress !== undefined && ` Progress: ${selectedReport.progress}%`}
+                      {selectedReport.etaMinutes !== undefined && ` (ETA: ${selectedReport.etaMinutes}m)`}
+                    </p>
                   </div>
                 </div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Resolved')}`}>
-                    {['Resolved', 'Closed'].includes(selectedComplaint.status) ? '✓' : '5'}
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedReport.status || 'Detected', 'Resolved')}`}>
+                    {['Resolved', 'Completed', 'Closed'].includes(selectedReport.status || '') ? '✓' : '5'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 5: Resolved</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">Safety clearance verified. Post-patch telemetry complete.</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5 font-semibold font-semibold">Safety clearance verified. Post-patch telemetry complete.</p>
                   </div>
                 </div>
 
                 <div className="relative flex gap-3.5 items-start">
-                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedComplaint.status, 'Closed')}`}>
-                    {selectedComplaint.status === 'Closed' ? '✓' : '6'}
+                  <div className={`absolute -left-[23px] w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${getWorkflowStepClass(selectedReport.status || 'Detected', 'Closed')}`}>
+                    {selectedReport.status === 'Closed' ? '✓' : '6'}
                   </div>
                   <div>
                     <h5 className="text-xs font-bold text-primary">Stage 6: Closed</h5>
-                    <p className="text-[10px] text-text-secondary mt-0.5">Resolution verified by citizen. Case officially closed.</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5 font-semibold font-semibold">Resolution verified by citizen. Case officially closed.</p>
                   </div>
                 </div>
               </div>
 
               {/* CITIZEN VERIFICATION SYSTEM PANEL */}
-              {selectedComplaint.status === 'Resolved' && !isAdmin && (
+              {selectedComplaint && selectedComplaint.status === 'Resolved' && !isAdmin && (
                 <div className="mt-6 pt-6 border-t border-border-subtle/80 space-y-4 animate-fade-in-up">
                   <h4 className="font-bold text-xs text-primary flex items-center gap-1.5 uppercase tracking-wider">
                     <MessageSquare className="w-4 h-4 text-purple-600" /> Citizen Verification System
@@ -1194,24 +1367,53 @@ export function MunicipalOperations() {
                 <div className="mt-6 pt-6 border-t border-border-subtle/80 space-y-4 animate-fade-in-up">
                   <h5 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider block">Admin Dispatch Controls</h5>
                   
-                  {/* Priority update */}
+                  {/* Reassign Team option for active repairs */}
+                  {['Assigned', 'Repairing', 'In Progress', 'Delayed', 'Awaiting Resolution'].includes(selectedReport.status || '') && (
+                    <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-border-subtle">
+                      <span className="text-[9px] font-bold text-text-secondary uppercase">Reassign Team:</span>
+                      <select
+                        value={selectedReport.assignedTeam || ''}
+                        onChange={(e) => {
+                          const newTeam = e.target.value;
+                          if (newTeam) {
+                            handleAdminStatusChange(selectedReport.id, selectedReport.status || 'Assigned', newTeam);
+                          }
+                        }}
+                        className="bg-white border border-slate-200 rounded px-2 py-1 text-[10px] font-bold text-text-secondary outline-none focus:border-primary cursor-pointer"
+                      >
+                        <option value="" disabled>Select Team</option>
+                        <option value="Team Alpha">Team Alpha (Active: {getTeamDispatchesCount(reports, 'Team Alpha')}/2)</option>
+                        <option value="Team Bravo">Team Bravo (Active: {getTeamDispatchesCount(reports, 'Team Bravo')}/2)</option>
+                        <option value="Team Charlie">Team Charlie (Active: {getTeamDispatchesCount(reports, 'Team Charlie')}/2)</option>
+                        <option value="Team Delta">Team Delta (Active: {getTeamDispatchesCount(reports, 'Team Delta')}/2)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Update Priority */}
                   <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-border-subtle">
                     <span className="text-[9px] font-bold text-text-secondary uppercase">Update Priority:</span>
                     <div className="flex gap-1.5">
-                      {(['Low', 'Medium', 'High', 'Critical'] as const).map(prio => (
-                        <button
-                          key={prio}
-                          type="button"
-                          onClick={() => handleUpdatePriority(selectedComplaint.id, prio)}
-                          className={`px-2 py-0.5 rounded text-[8px] font-bold cursor-pointer transition-colors ${
-                            selectedComplaint.priority === prio
-                              ? 'bg-primary text-white'
-                              : 'bg-white hover:bg-slate-100 text-text-secondary border border-border-subtle'
-                          }`}
-                        >
-                          {prio}
-                        </button>
-                      ))}
+                      {(['Low', 'Medium', 'High', 'Critical'] as const).map(prio => {
+                        const isCurrent = (prio === 'Low' && selectedReport.severity === 'Scheduled') ||
+                                          (prio === 'Medium' && selectedReport.severity === 'Pending') ||
+                                          (prio === 'High' && selectedReport.severity === 'Active') ||
+                                          (prio === 'Critical' && selectedReport.severity === 'Critical');
+                        return (
+                          <button
+                            key={prio}
+                            type="button"
+                            onClick={() => handleUpdatePriority(selectedReport.id, prio)}
+                            className={`px-2 py-0.5 rounded text-[8px] font-bold cursor-pointer transition-colors ${
+                              isCurrent
+                                ? 'bg-primary text-white'
+                                : 'bg-white hover:bg-slate-100 text-text-secondary border border-border-subtle'
+                            }`}
+                          >
+                            {prio}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1230,7 +1432,7 @@ export function MunicipalOperations() {
                         onClick={() => {
                           const val = (document.getElementById('admin-note-input') as HTMLInputElement)?.value;
                           if (val) {
-                            handleAddNotes(selectedComplaint.id, val);
+                            handleAddNotes(selectedReport.id, val);
                             (document.getElementById('admin-note-input') as HTMLInputElement).value = '';
                           }
                         }}
@@ -1242,10 +1444,10 @@ export function MunicipalOperations() {
                   </div>
 
                   {/* Historical logs for this incident */}
-                  {selectedComplaint.notes && (
+                  {selectedReport.repairNotes && (
                     <div className="bg-slate-50 p-3 rounded-lg border border-border-subtle text-[9px] space-y-1">
                       <span className="font-bold text-text-secondary uppercase">Incident Log History:</span>
-                      <pre className="whitespace-pre-wrap font-sans font-semibold text-primary">{selectedComplaint.notes}</pre>
+                      <pre className="whitespace-pre-wrap font-sans font-semibold text-primary">{selectedReport.repairNotes}</pre>
                     </div>
                   )}
                 </div>
@@ -1340,6 +1542,163 @@ export function MunicipalOperations() {
         </section>
 
       </div>
+
+      {/* Crew Progress Update Modal */}
+      {updatingReport && ReactDOM.createPortal(
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50">
+          <div 
+            className="bg-white rounded-xl shadow-xl border border-slate-200/80 max-w-md w-full flex flex-col"
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+          >
+            {/* Modal Header */}
+            <div className="flex justify-between items-start border-b p-6 pb-3 sticky top-0 bg-white z-10">
+              <div>
+                <h4 className="text-sm font-black text-primary uppercase tracking-wide flex items-center gap-1.5">
+                  👷 Crew Progress Report
+                </h4>
+                <p className="text-[10px] text-text-secondary mt-0.5 font-semibold">
+                  Updating: {updatingReport.title}
+                </p>
+              </div>
+              <button 
+                onClick={() => setUpdatingReport(null)}
+                className="text-text-secondary hover:text-primary font-bold text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 py-4 space-y-4 text-xs font-semibold text-text-secondary flex-1">
+              {/* Progress Slider */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="uppercase tracking-wider">Progress %</span>
+                  <span className="text-primary font-black bg-slate-100 px-2 py-0.5 rounded">{updateProgressVal}%</span>
+                </div>
+                <input 
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={updateProgressVal}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setUpdateProgressVal(val);
+                    if (val === 100) {
+                      setUpdateStatusVal('Awaiting Resolution');
+                    } else if (updateStatusVal === 'Awaiting Resolution') {
+                      setUpdateStatusVal('In Progress');
+                    }
+                  }}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                />
+              </div>
+
+              {/* Status Dropdown */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider block">Operational Status</span>
+                <select
+                  value={updateStatusVal}
+                  onChange={(e) => {
+                    const status = e.target.value as any;
+                    setUpdateStatusVal(status);
+                    if (status === 'Awaiting Resolution') {
+                      setUpdateProgressVal(100);
+                    } else if (updateProgressVal === 100) {
+                      setUpdateProgressVal(95);
+                    }
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none focus:border-primary transition-all cursor-pointer"
+                >
+                  <option value="In Progress">In Progress (Active Repairing)</option>
+                  <option value="Delayed">Delayed (Issues / Blocked)</option>
+                  <option value="Awaiting Resolution">Awaiting Resolution (100% Complete)</option>
+                </select>
+              </div>
+
+              {/* ETA Input */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider block">Estimated Completion Time (ETA minutes remaining)</span>
+                <input 
+                  type="number"
+                  min="0"
+                  max="300"
+                  value={updateEtaVal}
+                  onChange={(e) => setUpdateEtaVal(Math.max(0, Number(e.target.value)))}
+                  className="w-full bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 text-xs font-bold text-primary outline-none focus:border-primary transition-all"
+                  placeholder="Minutes remaining..."
+                />
+              </div>
+
+              {/* Delay Reason (Conditional) */}
+              {(updateStatusVal === 'Delayed') && (
+                <div className="space-y-1 animate-fade-in-up">
+                  <span className="text-[10px] uppercase tracking-wider block text-red-600">Delay Reason</span>
+                  <input 
+                    type="text"
+                    value={updateDelayReason}
+                    onChange={(e) => setUpdateDelayReason(e.target.value)}
+                    className="w-full bg-red-50/20 border border-red-200 rounded-lg px-3 py-2 text-xs font-bold text-red-700 outline-none focus:border-red-500 transition-all placeholder:text-red-300"
+                    placeholder="e.g. Bad weather, equipment breakdown..."
+                    required
+                  />
+                </div>
+              )}
+
+              {/* Repair Notes */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider block">Repair Logs / Notes</span>
+                <textarea 
+                  rows={2}
+                  value={updateNotes}
+                  onChange={(e) => setUpdateNotes(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200/80 rounded-lg px-3 py-2 text-xs font-semibold text-primary outline-none focus:border-primary transition-all placeholder:text-slate-400"
+                  placeholder="Describe material status, compaction results, etc."
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex gap-3 justify-end text-xs font-bold p-6 pt-3 border-t border-slate-100 sticky bottom-0 bg-white z-10">
+              <button
+                onClick={() => setUpdatingReport(null)}
+                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-text-secondary hover:text-primary transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const updates: Partial<Report> = {
+                    progress: updateProgressVal,
+                    etaMinutes: updateEtaVal,
+                    status: updateStatusVal,
+                    delayReason: updateStatusVal === 'Delayed' ? updateDelayReason : undefined,
+                    repairNotes: updateNotes
+                  };
+
+                  updateReportStatus(updatingReport.id, updates);
+                  setSuccessMsg(`Crew report updated for: ${updatingReport.title}`);
+                  setTimeout(() => setSuccessMsg(null), 3000);
+                  setUpdatingReport(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-black text-white transition-colors cursor-pointer"
+              >
+                Submit Updates
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
     </div>
   );
 }

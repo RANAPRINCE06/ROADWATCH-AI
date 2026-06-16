@@ -40,8 +40,11 @@ interface Report {
   resolved?: boolean;
   description?: string;
   acknowledged?: boolean;
-  status?: 'Detected' | 'Verified' | 'Assigned' | 'Repairing' | 'Resolved';
+  status?: 'Detected' | 'Verified' | 'Queued' | 'Assigned' | 'Repairing' | 'In Progress' | 'Delayed' | 'Awaiting Resolution' | 'Resolved' | 'Completed';
   priorityScore?: number;
+  startedAt?: number;
+  queuedAt?: number;
+  citizenReportsCount?: number;
   estimatedRisk?: string;
   recommendedRepairTime?: string;
   assignedTeam?: string;
@@ -49,13 +52,23 @@ interface Report {
   beforeImageUrl?: string;
   afterImageUrl?: string;
   assignedAt?: number;
-  startedAt?: number;
   completedAt?: number;
   startDate?: string;
   estimatedCompletionDate?: string;
   actualCompletionDate?: string;
   resolutionTime?: string;
   repairNotes?: string;
+  
+  // Repair ETA and Progress Tracking
+  progress?: number;
+  etaMinutes?: number;
+  estimatedCompletionTime?: number;
+  delayReason?: string;
+  lastCrewUpdate?: string;
+  lastCrewUpdateAt?: number;
+  slaMinutes?: number;
+  delayMinutes?: number;
+
   citizenVerified?: boolean;
   citizenRating?: number;
   citizenFeedback?: string;
@@ -149,109 +162,7 @@ interface DB {
   aiReports: AIReport[];
 }
 
-const DEFAULT_REPORTS: Report[] = [
-  {
-    id: 'rep-1',
-    title: 'Severe Pothole',
-    location: 'Sector 4, Orchard Rd',
-    severity: 'Critical',
-    icon: 'alert',
-    source: 'AI Detected',
-    timestamp: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-    x: 35,
-    y: 50,
-    lat: 1.3048,
-    lng: 103.8318,
-    imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-    description: 'Large road crater, depth approx 10cm, causing lane diversions.',
-    status: 'Verified',
-    priorityScore: 92,
-    estimatedRisk: 'High Accident Risk',
-    recommendedRepairTime: 'Within 24 Hours',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-2',
-    title: 'Waterlogging (15cm)',
-    location: 'Bayfront Ave North',
-    severity: 'Critical',
-    icon: 'droplets',
-    source: 'Sensor Report',
-    timestamp: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-    x: 65,
-    y: 30,
-    lat: 1.2847,
-    lng: 103.8590,
-    imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
-    description: 'Water pooling on left lane. Traffic speed reduced to 20 km/h.',
-    status: 'Verified',
-    priorityScore: 89,
-    estimatedRisk: 'Hydroplaning Hazard',
-    recommendedRepairTime: 'Within 24 Hours',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-3',
-    title: 'Missing Divider & Work',
-    location: 'Cross St Junction',
-    severity: 'Active',
-    icon: 'hardhat',
-    source: 'Admin Update',
-    timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    x: 80,
-    y: 75,
-    lat: 1.2789,
-    lng: 103.8485,
-    imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
-    description: 'Lane narrowing due to utility maintenance. Ends in 2 days.',
-    status: 'Assigned',
-    priorityScore: 74,
-    estimatedRisk: 'Traffic Bottleneck Risk',
-    recommendedRepairTime: 'Within 3 Days',
-    assignedTeam: 'Team Alpha (Asphalt Resurfacing)',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-4',
-    title: 'Minor Surface Fissures',
-    location: 'Marina Boulevard',
-    severity: 'Pending',
-    icon: 'alert',
-    source: 'Citizen Report',
-    timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-    x: 20,
-    y: 25,
-    lat: 1.2764,
-    lng: 103.8545,
-    imageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
-    description: 'Cracks widening on shoulder. Scheduled for maintenance next cycle.',
-    status: 'Detected',
-    priorityScore: 48,
-    estimatedRisk: 'Pavement Deterioration',
-    recommendedRepairTime: 'Within 7 Days',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: 'rep-5',
-    title: 'Drain Overflow Risk',
-    location: 'Geylang Rd Junction',
-    severity: 'Active',
-    icon: 'droplets',
-    source: 'Sensor Report',
-    timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    x: 50,
-    y: 60,
-    lat: 1.3120,
-    lng: 103.8760,
-    imageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
-    description: 'Drainage debris causing minor water buildup on curbside.',
-    status: 'Verified',
-    priorityScore: 78,
-    estimatedRisk: 'Localized Flooding',
-    recommendedRepairTime: 'Within 48 Hours',
-    beforeImageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
-  }
-];
+const DEFAULT_REPORTS: Report[] = [];
 
 const DEFAULT_SENSORS: SensorDevice[] = [
   { id: 'sns-01', name: 'ESP32-Node 1', locationName: 'Sector 4, Orchard Rd', vibration: 12, temperature: 31.2, battery: 88, status: 'Online', connectivity: 'WiFi', roadHealthScore: 85, lat: 1.3048, lng: 103.8318, x: 35, y: 50 },
@@ -404,6 +315,105 @@ function addSystemLog(module: string, event: string, status: 'SUCCESS' | 'WARN' 
   io.emit('logs:updated', db.logs);
 }
 
+function sortQueuedHazards(hazards: Report[]): Report[] {
+  return [...hazards].sort((a, b) => {
+    const getSeverityWeight = (sev?: string) => {
+      switch (sev) {
+        case 'Critical': return 4;
+        case 'Active': return 3;
+        case 'Pending': return 2;
+        case 'Scheduled': return 1;
+        default: return 1;
+      }
+    };
+    const sevA = getSeverityWeight(a.severity);
+    const sevB = getSeverityWeight(b.severity);
+    if (sevB !== sevA) return sevB - sevA;
+
+    const scoreA = a.priorityScore || 0;
+    const scoreB = b.priorityScore || 0;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+
+    const reportsA = a.citizenReportsCount || 0;
+    const reportsB = b.citizenReportsCount || 0;
+    if (reportsB !== reportsA) return reportsB - reportsA;
+
+    const timeA = a.queuedAt || 0;
+    const timeB = b.queuedAt || 0;
+    return timeA - timeB;
+  });
+}
+
+function triggerAutoDispatch(reports: Report[]): { updatedReports: Report[]; dispatches: { reportId: string; team: string }[] } {
+  const teams = ['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'];
+  const updatedReports = [...reports];
+  const dispatches: { reportId: string; team: string }[] = [];
+
+  let queued = updatedReports.filter(r => r.status === 'Queued');
+  if (queued.length === 0) return { updatedReports, dispatches };
+
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  while (queued.length > 0 && attempts < maxAttempts) {
+    attempts++;
+    const workloads: Record<string, number> = {
+      'Team Alpha': 0,
+      'Team Bravo': 0,
+      'Team Charlie': 0,
+      'Team Delta': 0
+    };
+
+    updatedReports.forEach(r => {
+      if (r.assignedTeam && !r.resolved && r.status !== 'Resolved' && r.status !== 'Completed' &&
+          (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')) {
+        if (workloads[r.assignedTeam] !== undefined) {
+          workloads[r.assignedTeam]++;
+        }
+      }
+    });
+
+    const availableTeams = teams.filter(t => workloads[t] < 2).sort((a, b) => workloads[a] - workloads[b]);
+    if (availableTeams.length === 0) break;
+
+    const sortedQueued = sortQueuedHazards(queued);
+    const topHazard = sortedQueued[0];
+    const assignedTeam = availableTeams[0];
+
+    const hzIdx = updatedReports.findIndex(r => r.id === topHazard.id);
+    if (hzIdx > -1) {
+      const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      updatedReports[hzIdx] = {
+        ...updatedReports[hzIdx],
+        status: 'Assigned',
+        assignedTeam,
+        startDate: todayStr,
+        estimatedCompletionDate: todayStr,
+        queuedAt: undefined
+      };
+      
+      const record = {
+        id: `rep-log-${topHazard.id}-assigned`,
+        hazardId: topHazard.id,
+        hazardTitle: topHazard.title,
+        location: topHazard.location,
+        assignedTeam,
+        status: 'Assigned' as const,
+        startDate: todayStr,
+        actualCompletionDate: null,
+        timestamp: new Date().toISOString(),
+        notes: ''
+      };
+      
+      dispatches.push({ reportId: topHazard.id, team: assignedTeam });
+    }
+
+    queued = updatedReports.filter(r => r.status === 'Queued');
+  }
+
+  return { updatedReports, dispatches };
+}
+
 // Routes
 app.get('/api/reports', (req, res) => {
   const db = readDB();
@@ -418,6 +428,7 @@ app.post('/api/reports', (req, res) => {
   const estimatedRisk = r.estimatedRisk || (severity === 'Critical' ? 'High Accident Risk' : severity === 'Active' ? 'Moderate Damage Risk' : 'Minor Road Decay');
   const recommendedRepairTime = r.recommendedRepairTime || (severity === 'Critical' ? 'Within 24 Hours' : severity === 'Active' ? 'Within 3 Days' : 'Within 7 Days');
   const status = r.status || (((r.source === 'AI Detected' || r.source?.includes('AI')) && !r.source?.includes('Citizen')) ? 'Verified' : 'Detected');
+  const citizenReportsCount = r.citizenReportsCount || (r.source?.includes('Citizen') ? Math.floor(Math.random() * 12) + 3 : 1);
 
   const newReport: Report = {
     ...r,
@@ -427,6 +438,7 @@ app.post('/api/reports', (req, res) => {
     priorityScore,
     estimatedRisk,
     recommendedRepairTime,
+    citizenReportsCount,
     beforeImageUrl: r.beforeImageUrl || r.imageUrl || 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
   };
 
@@ -441,12 +453,127 @@ app.put('/api/reports/:id', (req, res) => {
   const db = readDB();
   const index = db.reports.findIndex(r => r.id === req.params.id);
   if (index > -1) {
-    db.reports[index] = { ...db.reports[index], ...req.body };
+    const updates = { ...req.body };
+
+    if (updates.status === 'Assigned' && updates.assignedTeam) {
+      const activeReps = db.reports.filter(r => r.id !== req.params.id);
+      const teamWorkload = activeReps.filter(r => 
+        r.assignedTeam === updates.assignedTeam && 
+        !r.resolved && 
+        r.status !== 'Resolved' && 
+        r.status !== 'Completed' && 
+        (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+      ).length;
+      
+      if (teamWorkload >= 2) {
+        const teams = ['Team Alpha', 'Team Bravo', 'Team Charlie', 'Team Delta'];
+        const workloads = teams.map(t => ({
+          name: t,
+          load: activeReps.filter(r => 
+            r.assignedTeam === t && 
+            !r.resolved && 
+            r.status !== 'Resolved' && 
+            r.status !== 'Completed' && 
+            (r.status === 'Assigned' || r.status === 'In Progress' || r.status === 'Repairing' || r.status === 'Delayed' || r.status === 'Awaiting Resolution')
+          ).length
+        })).sort((a, b) => a.load - b.load);
+
+        if (workloads[0].load < 2) {
+          updates.assignedTeam = workloads[0].name;
+        } else {
+          updates.status = 'Queued';
+          updates.queuedAt = Date.now();
+          updates.assignedTeam = undefined;
+          updates.startDate = undefined;
+          updates.estimatedCompletionDate = undefined;
+        }
+      }
+    }
+
+    const prevReport = db.reports[index];
+    if (updates.status === 'In Progress' && prevReport.status !== 'In Progress') {
+      updates.startedAt = Date.now();
+      updates.progress = updates.progress !== undefined ? updates.progress : 0;
+      const severity = updates.severity || prevReport.severity || 'Active';
+      updates.slaMinutes = severity === 'Critical' ? 2 : severity === 'Active' ? 5 : 10;
+      updates.etaMinutes = updates.etaMinutes || (severity === 'Critical' ? 12 : severity === 'Active' ? 25 : 45);
+      updates.estimatedCompletionTime = Date.now() + updates.etaMinutes * 60000;
+      updates.lastCrewUpdate = 'Crew deployed. Resurfacing and repair work initiated.';
+      updates.lastCrewUpdateAt = Date.now();
+    }
+
+    if (updates.status === 'Delayed' && prevReport) {
+      updates.lastCrewUpdate = `Repair delayed. Reason: ${updates.delayReason || 'Equipment/Crew reallocation'}`;
+      updates.lastCrewUpdateAt = Date.now();
+    }
+
+    if (updates.status === 'Awaiting Resolution' && prevReport) {
+      updates.lastCrewUpdate = 'Repair complete. Awaiting final quality assurance approval.';
+      updates.lastCrewUpdateAt = Date.now();
+    }
+
+    if (updates.progress !== undefined && prevReport) {
+      updates.lastCrewUpdateAt = Date.now();
+      if (updates.progress === 100) {
+        updates.status = 'Awaiting Resolution';
+        updates.lastCrewUpdate = 'Repair operations reached 100%. Awaiting inspection.';
+      } else {
+        updates.lastCrewUpdate = `Repair progress updated to ${updates.progress}%.`;
+      }
+    }
+
+    if (updates.etaMinutes !== undefined && prevReport) {
+      const prevEstTime = prevReport.estimatedCompletionTime || (prevReport.startedAt ? prevReport.startedAt + (prevReport.etaMinutes || 0) * 60000 : 0);
+      const newEstTime = Date.now() + updates.etaMinutes * 60000;
+      updates.estimatedCompletionTime = newEstTime;
+      
+      if (prevEstTime > 0 && newEstTime > prevEstTime + 10000) {
+        const diffMins = Math.round((newEstTime - prevEstTime) / 60000);
+        addSystemLog('Maintenance Dispatch', `ETA for "${prevReport.title}" increased by ${diffMins} minutes. Reason: ${updates.delayReason || 'Crew update'}`, 'WARN');
+        
+        // Add notifications
+        const newNotif = {
+          id: `notif-${Date.now()}`,
+          title: 'Repair ETA Increased',
+          message: `ETA for "${prevReport.title}" at ${prevReport.location} was increased. Reason: ${updates.delayReason || 'Unspecified'}`,
+          timestamp: new Date().toISOString(),
+          read: false,
+          citizenId: 'citizen_demo'
+        };
+        db.notifications = db.notifications || [];
+        db.notifications.unshift(newNotif);
+        io.emit('notifications:updated', db.notifications);
+      }
+    }
+    if (updates.status === 'Resolved' || updates.status === 'Completed') {
+      const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      updates.resolved = true;
+      updates.resolvedAt = Date.now();
+      updates.completedAt = Date.now();
+      updates.actualCompletionDate = updates.actualCompletionDate || db.reports[index].actualCompletionDate || todayStr;
+      updates.repairDate = updates.repairDate || db.reports[index].repairDate || todayStr;
+      
+      const start = updates.startedAt || db.reports[index].startedAt || (db.reports[index].timestamp ? new Date(db.reports[index].timestamp).getTime() : Date.now() - 42 * 60 * 1000);
+      const durationMins = Math.max(1, Math.round((Date.now() - start) / 60000));
+      updates.resolutionTime = `${durationMins} Minutes`;
+      
+      updates.afterImageUrl = updates.afterImageUrl || db.reports[index].afterImageUrl || 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80';
+      updates.repairNotes = updates.repairNotes || db.reports[index].repairNotes || 'Completed paving and smoothing of asphalt layer. Structural load validation complete.';
+    }
+    db.reports[index] = { ...db.reports[index], ...updates };
+
+    const autoResult = triggerAutoDispatch(db.reports);
+    db.reports = autoResult.updatedReports;
+    if (autoResult.dispatches.length > 0) {
+      autoResult.dispatches.forEach(d => {
+        addSystemLog('System Dispatch', `Auto-assigned queued hazard to ${d.team}`, 'SUCCESS');
+      });
+    }
     
     // Sync with citizen complaint if needed
-    if (req.params.id.startsWith('rep-from-comp-')) {
-      const complaintId = req.params.id.replace('rep-from-', '');
-      const cIndex = db.complaints.findIndex(c => c.id === complaintId);
+    if (req.params.id.toLowerCase().startsWith('rep-from-comp-')) {
+      const complaintId = req.params.id.toLowerCase().replace('rep-from-', '');
+      const cIndex = db.complaints.findIndex(c => c.id.toLowerCase() === complaintId);
       if (cIndex > -1) {
         let compStatus = db.complaints[cIndex].status;
         const status = req.body.status;
@@ -489,15 +616,16 @@ app.delete('/api/reports/:id', (req, res) => {
 
 app.post('/api/reports/clear-completed', (req, res) => {
   const db = readDB();
-  const completedReports = db.reports.filter(r => r.resolved || r.status === 'Resolved');
-  if (completedReports.length === 0) {
-    return res.json({ deletedCount: 0 });
-  }
-  const activeReports = db.reports.filter(r => !(r.resolved || r.status === 'Resolved'));
+  const completedReports = db.reports.filter(r => r.resolved || r.status === 'Resolved' || r.status === 'Completed');
+  const totalDuration = completedReports.reduce((sum, r) => {
+    return sum + parseInt(r.resolutionTime || '42');
+  }, 0);
+  const activeReports = db.reports.filter(r => !(r.resolved || r.status === 'Resolved' || r.status === 'Completed'));
   db.reports = activeReports;
   writeDB(db);
   io.emit('reports:updated', db.reports);
   addSystemLog('Admin Panel', `Deleted ${completedReports.length} completed task history record(s).`, 'WARN');
+  res.json({ deletedCount: completedReports.length });
 });
 
 app.put('/api/reports', (req, res) => {
@@ -517,7 +645,7 @@ app.get('/api/complaints', (req, res) => {
 app.post('/api/complaints', (req, res) => {
   const db = readDB();
   const complaint = req.body;
-  const id = complaint.id || `COMP-${Math.floor(100000 + Math.random() * 900000)}`;
+  const id = complaint.id || `comp-${Math.floor(100000 + Math.random() * 900000)}`;
   const timestamp = complaint.timestamp || new Date().toISOString();
   const priorityScore = complaint.priority === 'Critical' ? 95 : complaint.priority === 'High' ? 80 : complaint.priority === 'Medium' ? 55 : 30;
 
@@ -595,7 +723,7 @@ app.put('/api/complaints/:id', (req, res) => {
 
     // Sync to report
     const reportId = `rep-from-${req.params.id}`;
-    const rIndex = db.reports.findIndex(r => r.id === reportId);
+    const rIndex = db.reports.findIndex(r => r.id.toLowerCase() === reportId.toLowerCase());
     if (rIndex > -1) {
       let reportStatus = db.reports[rIndex].status;
       const status = req.body.status;
@@ -772,44 +900,172 @@ app.post('/api/simulation/trigger', (req, res) => {
   const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   let nextReportId = currentReportId;
 
-  if (step === 0) {
-    const newRep: Report = {
-      id: `rep-${Date.now()}`,
-      title: 'Critical Asphalt Sinkhole',
+  const DEMO_TEMPLATES = [
+    {
+      title: 'Severe Pothole [DEMO DATA]',
       location: 'Stamford Road Crossing',
       severity: 'Critical',
       icon: 'alert',
-      source: 'Citizen Portal',
-      timestamp: new Date().toISOString(),
-      x: 45,
-      y: 40,
+      description: 'Deep pothole forming in the middle lane, depth approx 12cm. High risk of tire damage. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
       lat: 1.2975,
       lng: 103.8525,
-      imageUrl: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?auto=format&fit=crop&w=400&q=80',
-      description: 'Large surface crack widening, depth 18cm. Poses collision risk.',
+      x: 45,
+      y: 40,
+      priorityScore: 94,
+      estimatedRisk: 'High Accident Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 24 Hours'
+    },
+    {
+      title: 'Debris on Roadway [DEMO DATA]',
+      location: 'Nicoll Highway Westbound',
+      severity: 'Active',
+      icon: 'hardhat',
+      description: 'Large construction debris and metal framing blocks the curbside lane. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3025,
+      lng: 103.8685,
+      x: 45,
+      y: 40,
+      priorityScore: 78,
+      estimatedRisk: 'Moderate Damage Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 3 Days'
+    },
+    {
+      title: 'Broken Traffic Signal [DEMO DATA]',
+      location: 'Bras Basah Road Junction',
+      severity: 'Critical',
+      icon: 'alert',
+      description: 'Intersection traffic lights are completely dark. Traffic flow is congested and dangerous. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1510935579761-125207a902f4?auto=format&fit=crop&w=400&q=80',
+      lat: 1.2985,
+      lng: 103.8510,
+      x: 62,
+      y: 68,
+      priorityScore: 92,
+      estimatedRisk: 'High Accident Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 24 Hours'
+    },
+    {
+      title: 'Flooded Street [DEMO DATA]',
+      location: 'Dunearn Road Eastbound',
+      severity: 'Critical',
+      icon: 'droplets',
+      description: 'Heavy water accumulation on the roadway, water depth exceeds 15cm. Vehicles turning back. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3280,
+      lng: 103.8110,
+      x: 45,
+      y: 35,
+      priorityScore: 95,
+      estimatedRisk: 'High Accident Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 24 Hours'
+    },
+    {
+      title: 'Fallen Tree Blocking Lane [DEMO DATA]',
+      location: 'Orchard Link Southbound',
+      severity: 'Active',
+      icon: 'hardhat',
+      description: 'Large tree branch snapped and blocking the left lane. Cars forcing a detour. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3048,
+      lng: 103.8318,
+      x: 35,
+      y: 50,
+      priorityScore: 75,
+      estimatedRisk: 'Moderate Damage Risk [DEMO DATA]',
+      recommendedRepairTime: 'Within 3 Days'
+    },
+    {
+      title: 'Damaged Road Sign [DEMO DATA]',
+      location: 'Jalan Besar Section 2',
+      severity: 'Pending',
+      icon: 'alert',
+      description: 'Speed limit sign has been bent to the ground, invisible to oncoming traffic. [DEMO DATA]',
+      imageUrl: 'https://images.unsplash.com/photo-1508962914676-134849a727f0?auto=format&fit=crop&w=400&q=80',
+      lat: 1.3050,
+      lng: 103.8500,
+      x: 50,
+      y: 50,
+      priorityScore: 48,
+      estimatedRisk: 'Minor Road Decay [DEMO DATA]',
+      recommendedRepairTime: 'Within 7 Days'
+    }
+  ];
+
+  if (step === 0) {
+    const t = DEMO_TEMPLATES[Math.floor(Math.random() * DEMO_TEMPLATES.length)];
+    const compId = `comp-${Math.floor(100000 + Math.random() * 900000)}`;
+    const newComp: CitizenComplaint = {
+      id: compId,
+      title: t.title,
+      description: t.description,
+      locationName: t.location,
+      imageUrl: t.imageUrl,
+      lat: t.lat,
+      lng: t.lng,
+      x: t.x,
+      y: t.y,
+      status: 'Submitted',
+      timestamp: new Date().toISOString(),
+      votes: 1,
+      priority: t.severity === 'Critical' ? 'Critical' : t.severity === 'Active' ? 'High' : 'Medium'
+    };
+    db.complaints.unshift(newComp);
+
+    const matchingReportId = `rep-from-${compId}`;
+    const newRep: Report = {
+      id: matchingReportId,
+      title: t.title,
+      location: t.location,
+      severity: t.severity as any,
+      icon: t.icon as any,
+      source: 'Citizen Portal',
+      timestamp: newComp.timestamp,
+      x: t.x,
+      y: t.y,
+      lat: t.lat,
+      lng: t.lng,
+      imageUrl: t.imageUrl,
+      description: t.description,
       status: 'Detected',
       priorityScore: 0,
       estimatedRisk: 'Unassessed',
-      recommendedRepairTime: 'Pending scan'
+      recommendedRepairTime: 'Pending scan',
+      beforeImageUrl: t.imageUrl
     };
     db.reports.unshift(newRep);
-    nextReportId = newRep.id;
-    addSystemLog('System Workflow', `Demo Mode: Stamford Rd pothole photo registered as Detected`, 'INFO');
+    nextReportId = matchingReportId;
+
+    // Add Notification
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      title: 'Complaint Submitted',
+      message: `Your report "${t.title}" has been successfully submitted.`,
+      timestamp: newComp.timestamp,
+      read: false,
+      citizenId: 'citizen_demo'
+    });
+
+    addSystemLog('Citizen Portal', `Demo Mode: ${t.title} registered as Submitted via Citizen Portal`, 'INFO');
   } else if (step === 1 && currentReportId) {
     const rIndex = db.reports.findIndex(r => r.id === currentReportId);
     if (rIndex > -1) db.reports[rIndex].status = 'Verified';
-    addSystemLog('AI Mesh Model', `Demo Mode: YOLOv8 processed Stamford Rd evidence successfully`, 'SUCCESS');
+    addSystemLog('AI Mesh Model', `Demo Mode: YOLOv8 processed evidence successfully`, 'SUCCESS');
   } else if (step === 2 && currentReportId) {
     // Map heatmap layer toggling happens client-side, just log it here
     addSystemLog('GIS Engine', `Demo Mode: Coordinates pinned to live heatmap`, 'SUCCESS');
   } else if (step === 3 && currentReportId) {
     const rIndex = db.reports.findIndex(r => r.id === currentReportId);
     if (rIndex > -1) {
-      db.reports[rIndex].priorityScore = 94;
-      db.reports[rIndex].estimatedRisk = 'High Accident Risk';
-      db.reports[rIndex].recommendedRepairTime = 'Within 24 Hours';
+      const rep = db.reports[rIndex];
+      const severity = rep.severity || 'Active';
+      db.reports[rIndex].priorityScore = severity === 'Critical' ? 94 : severity === 'Active' ? 78 : 48;
+      db.reports[rIndex].estimatedRisk = severity === 'Critical' ? 'High Accident Risk [DEMO DATA]' : 'Moderate Pavement Decay [DEMO DATA]';
+      db.reports[rIndex].recommendedRepairTime = severity === 'Critical' ? 'Within 24 Hours' : 'Within 3 Days';
     }
-    addSystemLog('AI Mesh Model', `Demo Mode: Priority Score calculated at 94/100`, 'SUCCESS');
+    addSystemLog('AI Mesh Model', `Demo Mode: Priority Score calculated successfully`, 'SUCCESS');
   } else if (step === 4 && currentReportId) {
     const rIndex = db.reports.findIndex(r => r.id === currentReportId);
     if (rIndex > -1) {
@@ -828,10 +1084,14 @@ app.post('/api/simulation/trigger', (req, res) => {
     if (rIndex > -1) {
       db.reports[rIndex].status = 'Resolved';
       db.reports[rIndex].resolved = true;
+      db.reports[rIndex].resolvedAt = Date.now();
       db.reports[rIndex].actualCompletionDate = todayStr;
       db.reports[rIndex].repairDate = todayStr;
       db.reports[rIndex].afterImageUrl = 'https://images.unsplash.com/photo-1594913785162-e6785b49eed9?auto=format&fit=crop&w=400&q=80';
       db.reports[rIndex].repairNotes = 'Completed paving and smoothing of asphalt layer. Structural load validation complete.';
+      
+      const autoResult = triggerAutoDispatch(db.reports);
+      db.reports = autoResult.updatedReports;
     }
     addSystemLog('Maintenance Dispatch', `Demo Mode: Stamford Rd repair completed successfully`, 'SUCCESS');
   } else if (step === 7 && currentReportId) {
@@ -892,6 +1152,72 @@ setInterval(() => {
     console.error('Error in periodic telemetry wiggler', e);
   }
 }, 12000);
+
+// SLA Watchdog and Auto-Progress loop (runs every 5 seconds)
+setInterval(() => {
+  try {
+    const db = readDB();
+    let changed = false;
+    
+    db.reports.forEach(r => {
+      if (r.status && ['In Progress', 'Delayed', 'Awaiting Resolution', 'Repairing'].includes(r.status) && r.startedAt && !r.resolved && r.status !== 'Completed' && r.status !== 'Resolved') {
+        const elapsedMins = (Date.now() - r.startedAt) / 60000;
+        const originalETA = r.etaMinutes || 25;
+        
+        if (originalETA > 0) {
+          const autoProgress = (elapsedMins / originalETA) * 100;
+          let calculatedProgress = r.progress || 0;
+          let calculatedStatus = r.status;
+          let delayMinutes = r.delayMinutes || 0;
+          
+          if (elapsedMins > originalETA) {
+            calculatedStatus = 'Delayed';
+            calculatedProgress = Math.min(autoProgress, 95);
+            delayMinutes = Math.round(elapsedMins - originalETA);
+          } else {
+            calculatedProgress = Math.min(autoProgress, 100);
+          }
+          
+          const newProgRounded = Math.round(calculatedProgress);
+          if (r.progress !== newProgRounded || r.status !== calculatedStatus || r.delayMinutes !== delayMinutes) {
+            r.progress = newProgRounded;
+            r.status = calculatedStatus as any;
+            r.delayMinutes = delayMinutes;
+            (r as any).updatedAt = Date.now();
+            changed = true;
+          }
+        }
+        
+        // SLA Breach logic
+        if (r.slaMinutes && elapsedMins >= r.slaMinutes && !(r as any).slaBreached) {
+          (r as any).slaBreached = true;
+          changed = true;
+          
+          addSystemLog('System SLA Watchdog', `SLA Breach: Hazard "${r.title}" at ${r.location} exceeded target resolution time of ${r.slaMinutes} minutes.`, 'WARN');
+          
+          const newNotif = {
+            id: `notif-${Date.now()}`,
+            title: '⚠️ SLA Breach Detected',
+            message: `Hazard "${r.title}" has breached its SLA of ${r.slaMinutes} minutes. Current status is ${r.status}.`,
+            timestamp: new Date().toISOString(),
+            read: false,
+            citizenId: 'citizen_demo'
+          };
+          db.notifications = db.notifications || [];
+          db.notifications.unshift(newNotif);
+        }
+      }
+    });
+    
+    if (changed) {
+      writeDB(db);
+      io.emit('reports:updated', db.reports);
+      io.emit('notifications:updated', db.notifications);
+    }
+  } catch (e) {
+    console.error('Error in SLA Watchdog loop:', e);
+  }
+}, 5000);
 
 // Initialize DB on startup
 readDB();
