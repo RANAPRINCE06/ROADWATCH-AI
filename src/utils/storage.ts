@@ -197,6 +197,31 @@ export interface TelemetryLog {
   status: 'SUCCESS' | 'WARN' | 'INFO';
 }
 
+export interface UserProfile {
+  uid?: string;
+  email: string;
+  role: 'admin' | 'citizen';
+  name: string;
+  title: string;
+  avatarUrl: string;
+  lastLoginAt?: string;
+  createdAt?: string;
+}
+
+export interface LoginLogEntry {
+  id: string;
+  email: string;
+  name: string;
+  role: 'admin' | 'citizen';
+  title?: string;
+  loginMethod: 'email' | 'google' | 'quick_access' | 'demo';
+  timestamp: string; // ISO format
+  avatarUrl?: string;
+  status: 'Success' | 'Failed';
+  ipAddress?: string;
+  deviceInfo?: string;
+}
+
 export interface SystemSettings {
   refreshInterval: string;
   theme: string;
@@ -249,6 +274,48 @@ const DEFAULT_SETTINGS: SystemSettings = {
   soundAlerts: false,
   aiAnalysisDepth: true,
 };
+
+const DEFAULT_LOGIN_LOGS: LoginLogEntry[] = [
+  {
+    id: 'log-101',
+    email: 'authority@roadwatch.gov',
+    name: 'Municipal Director',
+    role: 'admin',
+    title: 'Municipal Authority',
+    loginMethod: 'email',
+    timestamp: new Date(Date.now() - 10 * 60000).toISOString(),
+    avatarUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=150&q=80',
+    status: 'Success',
+    ipAddress: '127.0.0.1 (Localhost)',
+    deviceInfo: 'Chrome Browser / Windows'
+  },
+  {
+    id: 'log-102',
+    email: 'maintenance@roadwatch.gov',
+    name: 'Maintenance Supervisor',
+    role: 'admin',
+    title: 'Maintenance Lead',
+    loginMethod: 'quick_access',
+    timestamp: new Date(Date.now() - 45 * 60000).toISOString(),
+    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+    status: 'Success',
+    ipAddress: '127.0.0.1 (Localhost)',
+    deviceInfo: 'Edge Browser / Windows'
+  },
+  {
+    id: 'log-103',
+    email: 'citizen@gmail.com',
+    name: 'Resident Citizen',
+    role: 'citizen',
+    title: 'Citizen Contributor',
+    loginMethod: 'google',
+    timestamp: new Date(Date.now() - 120 * 60000).toISOString(),
+    avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80',
+    status: 'Success',
+    ipAddress: '127.0.0.1 (Localhost)',
+    deviceInfo: 'Safari Mobile / iOS'
+  }
+];
 
 // HELPER FUNCTIONS FOR REPORTS
 export function getReports(): Report[] {
@@ -676,6 +743,127 @@ export function saveSettings(settings: SystemSettings): void {
     addLog('System Config', 'System configurations updated', 'INFO');
   } catch (e) {
     console.error('Failed to save settings to localStorage', e);
+  }
+}
+
+// ==========================================
+// USER SESSION & LOGIN AUDIT STORAGE SYSTEM
+// ==========================================
+
+export function getUserSession(): UserProfile | null {
+  try {
+    const stored = localStorage.getItem('roadwatch_user_profile');
+    if (stored) {
+      return JSON.parse(stored) as UserProfile;
+    }
+  } catch (e) {
+    console.error('Failed to parse stored user profile', e);
+  }
+  return null;
+}
+
+export function saveUserSession(
+  user: UserProfile, 
+  loginMethod: 'email' | 'google' | 'quick_access' | 'demo' = 'email'
+): void {
+  try {
+    const updatedUser: UserProfile = {
+      ...user,
+      lastLoginAt: new Date().toISOString()
+    };
+    
+    // 1. Save profile and role into LocalStorage
+    localStorage.setItem('roadwatch_user_profile', JSON.stringify(updatedUser));
+    localStorage.setItem('user_role', user.role);
+    window.dispatchEvent(new Event('roadwatch-user-updated'));
+
+    // 2. Write/update user document in Firestore users collection
+    const uid = user.uid || `user-${user.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    setDocument(getDocRef('users', uid), updatedUser);
+
+    // 3. Store login audit log entry
+    addLoginLog({
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      title: user.title,
+      loginMethod,
+      avatarUrl: user.avatarUrl,
+      status: 'Success',
+      ipAddress: '127.0.0.1 (Localhost)',
+      deviceInfo: typeof navigator !== 'undefined' && navigator.userAgent ? (navigator.userAgent.includes('Chrome') ? 'Chrome Web Browser' : 'Web Browser') : 'Desktop Client'
+    });
+
+    addLog('Auth Storage', `User session stored for ${user.email} (${user.role}) via ${loginMethod}`, 'SUCCESS');
+  } catch (e) {
+    console.error('Failed to save user session to storage', e);
+  }
+}
+
+export function logoutUser(): void {
+  try {
+    const currentUser = getUserSession();
+    if (currentUser) {
+      addLog('Auth Storage', `User ${currentUser.email} logged out.`, 'INFO');
+    }
+    localStorage.removeItem('roadwatch_user_profile');
+    localStorage.removeItem('user_role');
+    window.dispatchEvent(new Event('roadwatch-user-updated'));
+  } catch (e) {
+    console.error('Failed to clear user session', e);
+  }
+}
+
+export function getLoginLogs(): LoginLogEntry[] {
+  try {
+    const saved = localStorage.getItem('roadwatch_login_logs');
+    if (saved) {
+      const parsed = JSON.parse(saved) as LoginLogEntry[];
+      return parsed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }
+  } catch (e) {
+    console.error('Failed to load login logs from storage', e);
+  }
+  saveLoginLogs(DEFAULT_LOGIN_LOGS);
+  return DEFAULT_LOGIN_LOGS;
+}
+
+export function saveLoginLogs(logs: LoginLogEntry[]): void {
+  try {
+    localStorage.setItem('roadwatch_login_logs', JSON.stringify(logs));
+    window.dispatchEvent(new Event('roadwatch-login-logs-updated'));
+  } catch (e) {
+    console.error('Failed to save login logs to storage', e);
+  }
+}
+
+export function addLoginLog(entry: Omit<LoginLogEntry, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): LoginLogEntry {
+  const id = entry.id || `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const timestamp = entry.timestamp || new Date().toISOString();
+  
+  const newLog: LoginLogEntry = {
+    ...entry,
+    id,
+    timestamp
+  };
+
+  const logs = getLoginLogs();
+  logs.unshift(newLog);
+  saveLoginLogs(logs);
+  
+  // Persist into Firestore login_logs collection
+  setDocument(getDocRef('login_logs', id), newLog);
+  
+  return newLog;
+}
+
+export function clearLoginLogs(): void {
+  try {
+    localStorage.removeItem('roadwatch_login_logs');
+    window.dispatchEvent(new Event('roadwatch-login-logs-updated'));
+    addLog('Auth Storage', 'Login audit storage cleared.', 'INFO');
+  } catch (e) {
+    console.error('Failed to clear login logs', e);
   }
 }
 
@@ -1250,5 +1438,19 @@ subscribeToQuery(buildQuery(getCollectionRef('repairs'), queryOrderBy('timestamp
 subscribeToQuery(buildQuery(getCollectionRef('users')), (firebaseUsers) => {
   localStorage.setItem('roadwatch_users', JSON.stringify(firebaseUsers));
   window.dispatchEvent(new Event('roadwatch-users-updated'));
+});
+
+// Subscribe to Login Audit Logs in real-time
+let seededLoginLogs = false;
+subscribeToQuery(buildQuery(getCollectionRef('login_logs'), queryOrderBy('timestamp', 'desc')), (firebaseLoginLogs) => {
+  if (firebaseLoginLogs.length === 0 && !seededLoginLogs) {
+    seededLoginLogs = true;
+    DEFAULT_LOGIN_LOGS.forEach(l => {
+      setDocument(getDocRef('login_logs', l.id), l);
+    });
+  } else if (firebaseLoginLogs.length > 0) {
+    localStorage.setItem('roadwatch_login_logs', JSON.stringify(firebaseLoginLogs));
+    window.dispatchEvent(new Event('roadwatch-login-logs-updated'));
+  }
 });
 

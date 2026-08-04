@@ -1,18 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Database, ShieldAlert, Cpu, Terminal, Play, RotateCcw, AlertTriangle } from 'lucide-react';
-import { getLogs, addLog, clearLogs, saveReports, getReports, TelemetryLog } from '../utils/storage';
+import { Database, ShieldAlert, Cpu, Terminal, Play, RotateCcw, AlertTriangle, UserCheck, KeyRound, Trash2 } from 'lucide-react';
+import { getLogs, addLog, clearLogs, saveReports, getReports, TelemetryLog, getLoginLogs, clearLoginLogs, getUserSession, LoginLogEntry, UserProfile } from '../utils/storage';
 
 export function AdminPanel() {
   const [logs, setLogs] = useState<TelemetryLog[]>(() => getLogs());
+  const [loginLogs, setLoginLogs] = useState<LoginLogEntry[]>(() => getLoginLogs());
+  const [activeSession, setActiveSession] = useState<UserProfile | null>(() => getUserSession());
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const handleSync = () => {
       setLogs(getLogs());
+      setLoginLogs(getLoginLogs());
+      setActiveSession(getUserSession());
     };
     window.addEventListener('roadwatch-logs-updated', handleSync);
+    window.addEventListener('roadwatch-login-logs-updated', handleSync);
+    window.addEventListener('roadwatch-user-updated', handleSync);
     return () => {
       window.removeEventListener('roadwatch-logs-updated', handleSync);
+      window.removeEventListener('roadwatch-login-logs-updated', handleSync);
+      window.removeEventListener('roadwatch-user-updated', handleSync);
     };
   }, []);
 
@@ -246,6 +254,89 @@ export function AdminPanel() {
           </div>
         </section>
       </div>
+
+      {/* Login Storage & Audit History Section */}
+      <section className="bg-white rounded-xl border border-border-subtle shadow-sm p-6 mt-8">
+        <div className="flex items-center justify-between border-b border-border-subtle/50 pb-4 mb-5">
+          <div>
+            <h3 className="font-bold text-base text-primary flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-indigo-600" /> Stored User Logins & Auth Storage History
+            </h3>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Real-time audit log of authenticated users stored in LocalStorage and Firestore.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              clearLoginLogs();
+              setLoginLogs(getLoginLogs());
+            }}
+            className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border border-red-200"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Clear Login Storage
+          </button>
+        </div>
+
+        {activeSession && (
+          <div className="mb-6 p-4 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img src={activeSession.avatarUrl} alt={activeSession.name} className="w-10 h-10 rounded-full object-cover border border-indigo-200" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-xs text-slate-900">{activeSession.name}</span>
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 bg-indigo-600 text-white rounded-full">Active Session</span>
+                </div>
+                <span className="text-xs text-slate-600 font-medium">{activeSession.email} • {activeSession.title}</span>
+              </div>
+            </div>
+            <span className="text-[11px] font-bold text-indigo-700 bg-white px-3 py-1 rounded-lg border border-indigo-200 shadow-2xs">
+              Role: {activeSession.role.toUpperCase()}
+            </span>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-text-secondary">
+            <thead>
+              <tr className="border-b border-border-subtle text-[10px] font-bold uppercase tracking-wider text-text-secondary pb-2">
+                <th className="py-2.5">User</th>
+                <th className="py-2.5">Email</th>
+                <th className="py-2.5">Role</th>
+                <th className="py-2.5">Login Method</th>
+                <th className="py-2.5">IP / Device</th>
+                <th className="py-2.5">Timestamp</th>
+                <th className="py-2.5 text-right">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle/50 font-medium">
+              {loginLogs.map((log) => (
+                <tr key={log.id} className="hover:bg-slate-50">
+                  <td className="py-3 font-semibold text-primary flex items-center gap-2">
+                    {log.avatarUrl && <img src={log.avatarUrl} className="w-6 h-6 rounded-full object-cover" />}
+                    <span>{log.name}</span>
+                  </td>
+                  <td className="py-3 text-slate-700">{log.email}</td>
+                  <td className="py-3">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${log.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+                      {log.role}
+                    </span>
+                  </td>
+                  <td className="py-3 text-slate-800 font-semibold uppercase text-[10px] tracking-wide">
+                    {log.loginMethod}
+                  </td>
+                  <td className="py-3 text-slate-500 text-[11px]">{log.deviceInfo || 'Desktop Browser'}</td>
+                  <td className="py-3 text-slate-500 text-[11px]">{new Date(log.timestamp).toLocaleString()}</td>
+                  <td className="py-3 text-right">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      {log.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

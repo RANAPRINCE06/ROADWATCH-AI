@@ -347,7 +347,7 @@ export function ReportHazard() {
   // Real Gemini API call
   const runGeminiAnalysis = async (src: string, apiKey: string) => {
     setIsAnalyzing(true);
-    setAnalysisLog("Sending payload to Gemini AI...");
+    setAnalysisLog("Wait for AI Detection....");
 
     try {
       const mimeType = src.split(';')[0].split(':')[1] || 'image/jpeg';

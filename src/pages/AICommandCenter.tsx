@@ -1,7 +1,36 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, BrainCircuit, Activity, DollarSign, ShieldAlert, BarChart3, ChevronRight, HelpCircle } from 'lucide-react';
 import { getReports, getSensors, getComplaints, Report } from '../utils/storage';
-import { realGeminiActive, geminiApiKey } from '../utils/firebase';
+import { realGeminiActive as baseRealGeminiActive, geminiApiKey as baseGeminiApiKey } from '../utils/firebase';
+
+const rawCcApiKey = import.meta.env.VITE_COMMAND_CENTER_API_KEY;
+const geminiApiKey = (rawCcApiKey || baseGeminiApiKey || "").replace(/^["']|["']$/g, "").trim();
+const realGeminiActive = !!(geminiApiKey && geminiApiKey !== 'YOUR_GEMINI_API_KEY' && geminiApiKey !== 'MY_GEMINI_API_KEY');
+const isTimezoneIndia = (): boolean => {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const offset = new Date().getTimezoneOffset();
+    return tz === 'Asia/Kolkata' || offset === -330;
+  } catch (e) {
+    return false;
+  }
+};
+
+const localizeRoadName = (road: string, isIndia: boolean): string => {
+  if (!isIndia) return road;
+  const lower = road.toLowerCase();
+  if (lower.includes('bras basah')) return 'MG Road Crossing';
+  if (lower.includes('nicoll highway')) return 'Outer Ring Road';
+  if (lower.includes('tanjong pagar')) return 'Link Road Sector 3';
+  if (lower.includes('serangoon')) return 'Station Road';
+  if (lower.includes('marina way')) return 'Marine Drive Bypass';
+  if (lower.includes('pie exit')) return 'National Highway Exit 4';
+  if (lower.includes('keppel')) return 'Sardar Patel Marg';
+  if (lower.includes('bayfront')) return 'Ganga Path Slip Road';
+  if (lower.includes('stamford')) return 'Subhash Chandra Bose Marg';
+  if (lower.includes('geylang')) return 'Main Market Street';
+  return road;
+};
 
 interface Message {
   id: string;
@@ -12,17 +41,91 @@ interface Message {
 }
 
 export function AICommandCenter() {
+  const tzIndia = isTimezoneIndia();
+  const [locationName, setLocationName] = useState<string>(tzIndia ? 'India' : 'Singapore');
+  const [country, setCountry] = useState<string>(tzIndia ? 'India' : 'Singapore');
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [currencySymbol, setCurrencySymbol] = useState<string>(tzIndia ? '₹' : '$');
+  const [currencyCode, setCurrencyCode] = useState<string>(tzIndia ? 'INR' : 'SGD');
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       sender: 'bot',
-      text: 'Welcome to the RoadWatch AI Command Center. I have synthesized data from 5 IoT nodes, the citizen complaints ledger, and live satellite scans. Ask me to prioritize dispatches, estimate repair budgets, or forecast road failures.',
+      text: tzIndia
+        ? 'Welcome to the RoadWatch AI Command Center for India. I have synthesized data from 5 IoT nodes, the citizen complaints ledger, and live satellite scans for your region. Ask me to prioritize dispatches, estimate repair budgets, or forecast road failures.'
+        : 'Welcome to the RoadWatch AI Command Center. I have synthesized data from 5 IoT nodes, the citizen complaints ledger, and live satellite scans. Ask me to prioritize dispatches, estimate repair budgets, or forecast road failures.',
       timestamp: 'Just now'
     }
   ]);
   const [inputVal, setInputVal] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          setCoords({ lat: latitude, lng: longitude });
+
+          try {
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=12&addressdetails=1`,
+              {
+                headers: {
+                  'Accept': 'application/json',
+                  'User-Agent': 'RoadWatch-AI/1.0'
+                }
+              }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              const address = data.address;
+              const city = address.city || address.town || address.village || address.suburb || address.county || '';
+              const state = address.state || '';
+              const countryVal = address.country || '';
+              
+              let label = '';
+              if (city && state) {
+                label = `${city}, ${state}`;
+              } else if (city) {
+                label = city;
+              } else if (state && countryVal) {
+                label = `${state}, ${countryVal}`;
+              } else {
+                label = countryVal || 'Detected Location';
+              }
+              
+              setLocationName(label);
+              setCountry(countryVal);
+
+              const isIndia = countryVal.toLowerCase().includes('india');
+              setCurrencySymbol(isIndia ? '₹' : '$');
+              setCurrencyCode(isIndia ? 'INR' : 'SGD');
+
+              // Dynamically update the welcome message
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === 'welcome' 
+                    ? {
+                        ...msg,
+                        text: `Welcome to the RoadWatch AI Command Center for ${label}, ${countryVal}. I have synthesized data from 5 IoT nodes, the citizen complaints ledger, and live satellite scans for your region. Ask me to prioritize dispatches, estimate repair budgets, or forecast road failures.`
+                      }
+                    : msg
+                )
+              );
+            }
+          } catch (e) {
+            console.warn("Reverse geocoding failed", e);
+          }
+        },
+        (error) => {
+          console.warn("Geolocation fetch failed", error);
+        }
+      );
+    }
+  }, []);
 
   const [reports, setReports] = useState<Report[]>(() => getReports());
   const [sensors, setSensors] = useState(() => getSensors());
@@ -56,29 +159,32 @@ export function AICommandCenter() {
     const low = text.toLowerCase();
     const active = reports.filter(r => !r.resolved);
     const criticals = active.filter(r => r.severity === 'Critical');
+    const isIndia = country.toLowerCase().includes('india');
     
     if (low.includes('budget') || low.includes('cost') || low.includes('estimate')) {
-      const totalCost = active.length * 1200 + 4000;
-      return `[Local AI Engine] Based on current active hazards (${active.length} unresolved reports) and contractor cost rates, the estimated total repair budget is $${totalCost.toLocaleString()} SGD. Detailed cost breakdown is shown below.`;
+      const multiplier = isIndia ? 80000 : 1200;
+      const baseFee = isIndia ? 250000 : 4000;
+      const totalCost = active.length * multiplier + baseFee;
+      return `[Local AI Engine] Based on current active hazards in ${locationName} (${active.length} unresolved reports) and local contractor cost rates, the estimated total repair budget is ${currencySymbol}${totalCost.toLocaleString()} ${currencyCode}. Detailed cost breakdown is shown below.`;
     } else if (low.includes('risk') || low.includes('accident') || low.includes('safety')) {
       if (criticals.length > 0) {
         const locations = criticals.map(c => c.location).join(', ');
-        return `[Local AI Engine] High-risk zones identified at: ${locations}. Critical hazards are accelerating vehicle collision probabilities in these sectors. Rerouting traffic is advised.`;
+        return `[Local AI Engine] High-risk zones identified at: ${locations}. Critical hazards are accelerating vehicle collision probabilities in these sectors of ${locationName}. Rerouting traffic is advised.`;
       }
-      return `[Local AI Engine] Sector 4, Orchard Road (decay index 8.4) and Bayfront Ave North (15cm flooding) present the highest collision probabilities due to speed limits and severe hazard conditions.`;
+      return `[Local AI Engine] Main transit corridors in ${locationName} present the highest collision probabilities due to speed limits and severe hazard conditions.`;
     } else if (low.includes('failure') || low.includes('predict') || low.includes('decay')) {
-      return `[Local AI Engine] Predictive analysis flags Orchard Road segment A12 (84% probability of failure within 21 days) and Napier Road bus lane (72% probability within 30 days) for immediate preventive sealing.`;
+      return `[Local AI Engine] Predictive analysis flags main arterial routes in ${locationName} (84% probability of failure within 21 days) and transit corridors (72% probability within 30 days) for immediate preventive sealing.`;
     } else if (low.includes('dispatch') || low.includes('team') || low.includes('urgent') || low.includes('repair')) {
       const pendingAssign = active.filter(r => r.status === 'Detected' || r.status === 'Verified');
       if (pendingAssign.length > 0) {
         const titles = pendingAssign.map(p => `"${p.title}" at ${p.location}`).join(', ');
-        return `[Local AI Engine] Immediate repair dispatches needed for: ${titles}. Crews should be deployed with corresponding work orders.`;
+        return `[Local AI Engine] Immediate repair dispatches needed for: ${titles}. Crews in ${locationName} should be deployed with corresponding work orders.`;
       }
-      return `[Local AI Engine] All critical dispatches scheduled. Team Gamma is currently active on site.`;
+      return `[Local AI Engine] All critical dispatches scheduled in ${locationName}. Team Gamma is currently active on site.`;
     } else if (low.includes('report') || low.includes('generate') || low.includes('weekly')) {
-      return `[Local AI Engine] Weekly City Infrastructure Briefing generated. Total reported hazards: ${reports.length}, Resolved: ${reports.filter(r => r.resolved).length}, Active IoT sensors: ${sensors.filter(s => s.status === 'Online').length}/5.`;
+      return `[Local AI Engine] Weekly City Infrastructure Briefing generated for ${locationName}. Total reported hazards: ${reports.length}, Resolved: ${reports.filter(r => r.resolved).length}, Active IoT sensors: ${sensors.filter(s => s.status === 'Online').length}/5.`;
     } else {
-      return `[Local AI Engine] I am ready to run diagnostics on Singapore municipal grids. I can estimate repair budgets, map out high-risk accident zones, list team work schedules, or run forecast models for pavement failures.`;
+      return `[Local AI Engine] I am ready to run diagnostics on ${locationName} municipal grids. I can estimate repair budgets, map out high-risk accident zones, list team work schedules, or run forecast models for pavement failures.`;
     }
   };
 
@@ -100,13 +206,14 @@ export function AICommandCenter() {
     }
 
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
       
+      const isIndia = country.toLowerCase().includes('india');
       const context = {
         hazards: reports.filter(r => !r.resolved).map(r => ({
           id: r.id,
           title: r.title,
-          location: r.location,
+          location: localizeRoadName(r.location, isIndia),
           severity: r.severity,
           status: r.status,
           priorityScore: r.priorityScore
@@ -114,7 +221,7 @@ export function AICommandCenter() {
         sensors: sensors.map(s => ({
           id: s.id,
           name: s.name,
-          location: s.locationName,
+          location: localizeRoadName(s.locationName, isIndia),
           status: s.status,
           vibration: s.vibration,
           temperature: s.temperature,
@@ -123,20 +230,20 @@ export function AICommandCenter() {
         complaints: complaints.map(c => ({
           id: c.id,
           title: c.title,
-          location: c.locationName,
+          location: localizeRoadName(c.locationName, isIndia),
           status: c.status,
           votes: c.votes
         }))
       };
 
       const systemPrompt = `You are the RoadWatch AI Operations Copilot, an autonomous smart city coordinator.
-Below is the current real-time state of the municipal grids in Singapore (hazards, IoT edge sensors, and citizen complaints).
+Below is the current real-time state of the municipal grids in ${locationName}, ${country} (hazards, IoT edge sensors, and citizen complaints).
 Use this data to answer the user's questions accurately and dynamically. Do not make up mock data.
 
 Current State Context:
 ${JSON.stringify(context)}
 
-Provide clear, concise, and professional answers. If the user asks for budget, cost estimation, risk areas, or dispatches, give answers matching these data values.`;
+Provide clear, concise, and professional answers. Localize all details to the user's region: ${locationName}, ${country}. If they ask about local roads, risk zones, or city sectors, generate contextually relevant Indian road/city names (or appropriate local names for ${locationName}) to match the mock data, and translate currency to ${currencyCode} (${currencySymbol}) using reasonable mock conversion rates (e.g. ₹ for India).`;
 
       const response = await fetch(url, {
         method: 'POST',
@@ -404,11 +511,15 @@ Provide clear, concise, and professional answers. If the user asks for budget, c
             <div className="grid grid-cols-2 gap-4">
               <div className="border-r border-border-subtle/50 pr-4">
                 <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider">Allocated Budget</span>
-                <div className="text-2xl font-black text-primary mt-1">$100,000</div>
+                <div className="text-2xl font-black text-primary mt-1">
+                  {currencySymbol}{(country.toLowerCase().includes('india') ? 8000000 : 100000).toLocaleString()}
+                </div>
               </div>
               <div className="pl-2">
                 <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider">Spent to Date</span>
-                <div className="text-2xl font-black text-green-600 mt-1">$42,500</div>
+                <div className="text-2xl font-black text-green-600 mt-1">
+                  {currencySymbol}{(country.toLowerCase().includes('india') ? 3400000 : 42500).toLocaleString()}
+                </div>
               </div>
             </div>
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-4">
@@ -416,7 +527,7 @@ Provide clear, concise, and professional answers. If the user asks for budget, c
             </div>
             <div className="flex justify-between items-center text-[9px] text-text-secondary font-bold mt-2">
               <span>42.5% Utilized</span>
-              <span>$57,500 Remaining</span>
+              <span>{currencySymbol}{(country.toLowerCase().includes('india') ? 4600000 : 57500).toLocaleString()} Remaining</span>
             </div>
           </div>
 
@@ -451,19 +562,27 @@ Provide clear, concise, and professional answers. If the user asks for budget, c
                 <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block">Sector Safety Index</span>
                 
                 <div className="flex justify-between items-center text-xs">
-                  <span className="font-semibold text-text-secondary">Orchard Sector</span>
+                  <span className="font-semibold text-text-secondary">
+                    {country.toLowerCase().includes('india') ? 'Central Market Sector' : 'Orchard Sector'}
+                  </span>
                   <span className="font-bold text-amber-600">85 (Warning)</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="font-semibold text-text-secondary">Marina Bay</span>
+                  <span className="font-semibold text-text-secondary">
+                    {country.toLowerCase().includes('india') ? 'Metro Bypass Corridor' : 'Marina Bay'}
+                  </span>
                   <span className="font-bold text-green-600">92 (Optimal)</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="font-semibold text-text-secondary">Downtown Core</span>
+                  <span className="font-semibold text-text-secondary">
+                    {country.toLowerCase().includes('india') ? 'Downtown Junction' : 'Downtown Core'}
+                  </span>
                   <span className="font-bold text-green-600">90 (Optimal)</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="font-semibold text-text-secondary">Geylang East</span>
+                  <span className="font-semibold text-text-secondary">
+                    {country.toLowerCase().includes('india') ? 'Industrial Sector 5' : 'Geylang East'}
+                  </span>
                   <span className="font-bold text-amber-600">76 (Warning)</span>
                 </div>
               </div>

@@ -8,6 +8,7 @@ import {
   createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { auth, realFirebaseActive, setDocument, getDocRef } from '../utils/firebase';
+import { saveUserSession } from '../utils/storage';
 import { 
   Mail, 
   Lock, 
@@ -135,10 +136,8 @@ export function Login() {
           console.warn('Firestore write failed, proceeding with login:', firestoreErr);
         }
 
-        // Save user session
-        localStorage.setItem('roadwatch_user_profile', JSON.stringify(userProfile));
-        localStorage.setItem('user_role', sidebarRole);
-        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        // Save user session & audit log
+        saveUserSession(userProfile, 'google');
         
         showToast('Login successful! Redirecting to Command Center...', 'success');
         
@@ -161,9 +160,7 @@ export function Login() {
           avatarUrl: avatar,
           uid: `mock-google-uid-${Date.now()}`
         };
-        localStorage.setItem('roadwatch_user_profile', JSON.stringify(userProfile));
-        localStorage.setItem('user_role', sidebarRole);
-        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        saveUserSession(userProfile, 'google');
 
         showToast('Demo Google Login successful! Redirecting...', 'success');
         
@@ -220,9 +217,7 @@ export function Login() {
 
         // Successful mock sign-in
         const completeProfile = { ...userProfile, uid: `mock-uid-${Date.now()}` };
-        localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
-        localStorage.setItem('user_role', sidebarRole);
-        window.dispatchEvent(new Event('roadwatch-user-updated'));
+        saveUserSession(completeProfile, 'email');
 
         showToast('Login successful! Welcome back.', 'success');
 
@@ -271,9 +266,7 @@ export function Login() {
         console.warn('Firestore write failed, proceeding with login:', firestoreErr);
       }
 
-      localStorage.setItem('roadwatch_user_profile', JSON.stringify(completeProfile));
-      localStorage.setItem('user_role', sidebarRole);
-      window.dispatchEvent(new Event('roadwatch-user-updated'));
+      saveUserSession(completeProfile, 'email');
 
       showToast('Login successful! Loading dashboard...', 'success');
 
