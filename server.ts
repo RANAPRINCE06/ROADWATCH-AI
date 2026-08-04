@@ -4,6 +4,15 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import mongoose from 'mongoose';
+import { 
+  ReportModel, 
+  CitizenComplaintModel, 
+  SensorDeviceModel, 
+  TelemetryLogModel, 
+  UserProfileModel, 
+  LoginLogModel 
+} from './src/models/mongodb.ts';
 
 const app = express();
 const server = createServer(app);
@@ -22,6 +31,20 @@ app.use(express.json());
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_PATH = path.join(__dirname, 'db.json');
+
+// MongoDB Connection Setup
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/roadwatch_ai';
+let isMongoConnected = false;
+
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    isMongoConnected = true;
+    console.log(`🚀 Successfully connected to MongoDB Database at ${MONGODB_URI}`);
+  })
+  .catch((err) => {
+    isMongoConnected = false;
+    console.warn(`⚠️ MongoDB Connection Info: ${err.message}. App is configured with JSON fallback mode.`);
+  });
 
 // Interface declarations
 interface Report {
@@ -300,10 +323,90 @@ function readDB(): DB {
 function writeDB(data: DB) {
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    if (isMongoConnected) {
+      Promise.all([
+        ...data.reports.map(r => (ReportModel as any).updateOne({ id: r.id }, { $set: r }, { upsert: true })),
+        ...data.complaints.map(c => (CitizenComplaintModel as any).updateOne({ id: c.id }, { $set: c }, { upsert: true })),
+        ...data.sensors.map(s => (SensorDeviceModel as any).updateOne({ id: s.id }, { $set: s }, { upsert: true }))
+      ]).catch((err: any) => console.error('MongoDB sync error:', err.message));
+    }
   } catch (e) {
     console.error('Failed to write database', e);
   }
 }
+
+// User Profiles API (MongoDB)
+app.get('/api/users', async (_req, res) => {
+  try {
+    if (isMongoConnected) {
+      const users = await (UserProfileModel as any).find().lean();
+      return res.json(users);
+    }
+    const db = readDB();
+    res.json((db as any).users || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    const userData = req.body;
+    if (!userData.email || !userData.role) {
+      return res.status(400).json({ error: 'Email and role required' });
+    }
+    const uid = userData.uid || `user-${userData.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const userDoc = { ...userData, uid, lastLoginAt: new Date().toISOString() };
+
+    if (isMongoConnected) {
+      await (UserProfileModel as any).updateOne({ uid }, { $set: userDoc }, { upsert: true });
+    }
+    res.status(200).json(userDoc);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to save user' });
+  }
+});
+
+// Login Audit Logs API (MongoDB)
+app.get('/api/login-logs', async (_req, res) => {
+  try {
+    if (isMongoConnected) {
+      const logs = await (LoginLogModel as any).find().sort({ createdAt: -1 }).lean();
+      return res.json(logs);
+    }
+    const db = readDB();
+    res.json((db as any).loginLogs || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch login logs' });
+  }
+});
+
+app.post('/api/login-logs', async (req, res) => {
+  try {
+    const entry = req.body;
+    const id = entry.id || `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const timestamp = entry.timestamp || new Date().toISOString();
+    const logDoc = { ...entry, id, timestamp };
+
+    if (isMongoConnected) {
+      await (LoginLogModel as any).create(logDoc);
+    }
+    res.status(201).json(logDoc);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create login log' });
+  }
+});
+
+app.post('/api/login-logs/clear', async (_req, res) => {
+  try {
+    if (isMongoConnected) {
+      await (LoginLogModel as any).deleteMany({});
+    }
+    res.status(200).json({ message: 'Login logs cleared' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to clear login logs' });
+  }
+});
 
 // Add system log
 function addSystemLog(module: string, event: string, status: 'SUCCESS' | 'WARN' | 'INFO') {

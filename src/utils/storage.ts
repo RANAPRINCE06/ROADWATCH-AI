@@ -777,9 +777,15 @@ export function saveUserSession(
     localStorage.setItem('user_role', user.role);
     window.dispatchEvent(new Event('roadwatch-user-updated'));
 
-    // 2. Write/update user document in Firestore users collection
+    // 2. Write/update user document in Firestore and MongoDB database
     const uid = user.uid || `user-${user.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
     setDocument(getDocRef('users', uid), updatedUser);
+
+    fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedUser)
+    }).catch(err => console.warn('MongoDB API sync notice:', err.message));
 
     // 3. Store login audit log entry
     addLoginLog({
@@ -851,8 +857,13 @@ export function addLoginLog(entry: Omit<LoginLogEntry, 'id' | 'timestamp'> & { i
   logs.unshift(newLog);
   saveLoginLogs(logs);
   
-  // Persist into Firestore login_logs collection
+  // Persist into Firestore and MongoDB database
   setDocument(getDocRef('login_logs', id), newLog);
+  fetch('/api/login-logs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newLog)
+  }).catch(err => console.warn('MongoDB log sync notice:', err.message));
   
   return newLog;
 }
@@ -861,6 +872,7 @@ export function clearLoginLogs(): void {
   try {
     localStorage.removeItem('roadwatch_login_logs');
     window.dispatchEvent(new Event('roadwatch-login-logs-updated'));
+    fetch('/api/login-logs/clear', { method: 'POST' }).catch(err => console.warn('MongoDB log clear notice:', err.message));
     addLog('Auth Storage', 'Login audit storage cleared.', 'INFO');
   } catch (e) {
     console.error('Failed to clear login logs', e);

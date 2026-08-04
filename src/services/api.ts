@@ -1,4 +1,4 @@
-import { Report, SensorDevice, CitizenComplaint, TelemetryLog, SystemSettings } from '../utils/storage';
+import { Report, SensorDevice, CitizenComplaint, TelemetryLog, SystemSettings, UserProfile, LoginLogEntry } from '../utils/storage';
 
 const API_BASE = '/api';
 
@@ -94,6 +94,30 @@ export const settingsApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings)
     }).then(res => handleResponse<SystemSettings>(res))
+};
+
+export const usersApi = {
+  fetch: () => fetch(`${API_BASE}/users`).then(res => handleResponse<UserProfile[]>(res)),
+  save: (user: UserProfile) =>
+    fetch(`${API_BASE}/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(user)
+    }).then(res => handleResponse<UserProfile>(res))
+};
+
+export const loginLogsApi = {
+  fetch: () => fetch(`${API_BASE}/login-logs`).then(res => handleResponse<LoginLogEntry[]>(res)),
+  create: (entry: Omit<LoginLogEntry, 'id' | 'timestamp'> & { id?: string; timestamp?: string }) =>
+    fetch(`${API_BASE}/login-logs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry)
+    }).then(res => handleResponse<LoginLogEntry>(res)),
+  clear: () =>
+    fetch(`${API_BASE}/login-logs/clear`, { method: 'POST' }).then(res => {
+      if (!res.ok) throw new Error('Failed to clear login logs');
+    })
 };
 
 export const simulationApi = {
