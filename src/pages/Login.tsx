@@ -27,7 +27,7 @@ export function Login() {
 
   // Form states
   const [email, setEmail] = useState('authority@roadwatch.gov');
-  const [password, setPassword] = useState('123456');
+  const [password, setPassword] = useState('RoadWatch@2026!');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -103,6 +103,53 @@ export function Login() {
     }
 
     return { sidebarRole, title, dest, avatar };
+  };
+
+  // Instant 1-Click Quick Demo Login Handler
+  const handleQuickDemoLogin = (selectedRole: 'authority' | 'maintenance' | 'citizen') => {
+    setIsAuthenticating(true);
+    setToast(null);
+    setRole(selectedRole);
+
+    let sidebarRole: 'admin' | 'citizen' = 'admin';
+    let title = 'Municipal Authority';
+    let dest = '/dashboard';
+    let avatar = 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=150&q=80';
+    let demoEmail = 'authority@roadwatch.gov';
+
+    if (selectedRole === 'maintenance') {
+      sidebarRole = 'admin';
+      title = 'Maintenance Supervisor';
+      dest = '/gov-dashboard';
+      avatar = 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80';
+      demoEmail = 'maintenance@roadwatch.gov';
+    } else if (selectedRole === 'citizen') {
+      sidebarRole = 'citizen';
+      title = 'Resident Citizen';
+      dest = '/citizen';
+      avatar = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80';
+      demoEmail = 'citizen@gmail.com';
+    }
+
+    const namePart = demoEmail.split('@')[0];
+    const displayName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+
+    const completeProfile = {
+      email: demoEmail,
+      role: sidebarRole,
+      name: displayName,
+      title: title,
+      avatarUrl: avatar,
+      uid: `quick-uid-${Date.now()}`
+    };
+
+    saveUserSession(completeProfile, 'quick_access');
+
+    showToast('Quick Login successful! Redirecting...', 'success');
+
+    setTimeout(() => {
+      navigate(redirect || dest);
+    }, 600);
   };
 
   // Handle Google Login
@@ -199,8 +246,8 @@ export function Login() {
           setIsAuthenticating(false);
           return;
         }
-        if (password.length < 6) {
-          showToast('Incorrect Password', 'error');
+        if (password.length < 4) {
+          showToast('Please enter a password', 'error');
           setIsAuthenticating(false);
           return;
         }
@@ -404,6 +451,37 @@ export function Login() {
             Continue with Google
           </button>
 
+          {/* Instant 1-Click Quick Demo Login */}
+          <div className="mb-5 p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl">
+            <span className="block text-[10px] font-black uppercase tracking-wider text-slate-600 mb-2 text-center">⚡ Instant 1-Click Demo Login</span>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                disabled={isAuthenticating}
+                onClick={() => handleQuickDemoLogin('authority')}
+                className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-sm active:scale-95 text-center"
+              >
+                🏛 Authority
+              </button>
+              <button
+                type="button"
+                disabled={isAuthenticating}
+                onClick={() => handleQuickDemoLogin('maintenance')}
+                className="py-2.5 px-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-sm active:scale-95 text-center"
+              >
+                👷 Maintenance
+              </button>
+              <button
+                type="button"
+                disabled={isAuthenticating}
+                onClick={() => handleQuickDemoLogin('citizen')}
+                className="py-2.5 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-sm active:scale-95 text-center"
+              >
+                👤 Citizen
+              </button>
+            </div>
+          </div>
+
           {/* Divider */}
           <div className="relative flex py-2 items-center mb-5">
             <div className="flex-grow border-t border-slate-200"></div>
@@ -499,7 +577,7 @@ export function Login() {
                       } else {
                         setEmail('citizen@gmail.com');
                       }
-                      setPassword('123456');
+                      setPassword('RoadWatch@2026!');
                     }}
                     className={`py-2.5 rounded-lg border text-[10px] font-black text-center transition-all cursor-pointer select-none ${
                       role === opt.key 
